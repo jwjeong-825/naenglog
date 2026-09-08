@@ -9,3 +9,4 @@
 - 초과/중복/부정 명령, 잘못된 날짜, 저장 실패 등 9개 테스트 통과.
 - React/Vinext/Vite/Cloudflare 의존성 수정 버전 적용. npm audit 0건 확인.
 - 로컬 HTTP 200 확인. 최종 배포 진행 중.
+- 비공개 배포 성공: https://naenglog-fridge.vk4yrj847p.chatgpt.site (공개 접근 승인 대기).

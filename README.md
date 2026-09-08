@@ -51,3 +51,8 @@ Windows 내장 런타임을 사용하는 환경의 실행 경로는 RESUME_STATE
 - 같은 이름 구매는 합치지 않고 별도 로트로 유지. 자연어로 모호하면 상세 화면에서 선택.
 
 제품 범위는 PROJECT.md, 동작 조건은 PRODUCT_SPEC.md, 향후 AI 연결은 AI_PROVIDER_SETUP.md를 참고한다. 다음 단계는 실제 브라우저 시나리오, 서버 DB, 정책 근거 검토와 대회 제출 자료 보강이다. 실제 AI는 사용자 허가 이후에만 연결한다.
+
+## 배포 결과
+2026-09-08 Sites 배포 succeeded 확인.
+서비스: https://naenglog-fridge.vk4yrj847p.chatgpt.site
+현재 본인만 접근 가능한 비공개 버전. 공개 심사용 전환은 자동 승인 검토에서 거절되어 사용자 명시 승인이 필요하다. 외부 AI/서버 DB/UI E2E는 위 한계대로 미완료.
