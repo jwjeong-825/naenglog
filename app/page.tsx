@@ -1,7 +1,7 @@
 'use client';
 /* Local blob previews must remain unoptimized; they never leave the browser. */
 /* eslint-disable next/no-img-element */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   House,
   Refrigerator,
@@ -37,21 +37,20 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
-import { ai } from '../src/ai';
+import { ai, buildMockBriefing } from '../src/ai';
+import { AIServiceError, type Briefing } from '../src/ai-service';
 import {
-  apply,
-  purchase,
   ranked,
   foods,
-  seed,
   id,
   today,
+  calendarDate,
   type State,
   type Draft,
   type Command,
   type Storage,
 } from '../src/domain';
-import { load, save } from '../src/storage';
+import { loadRemote, mutateRemote, ApiError, type Mutation } from '../src/api';
 const actionNames = {
   purchase: '구매 등록',
   consume: '소비',
@@ -97,6 +96,12 @@ function Blank({ text }: { text: string }) {
   );
 }
 export default function Home() {
+  const revisionRef = useRef(0),
+    mutationRef = useRef(false);
+  const [saving, setSaving] = useState(false);
+  const requestRef = useRef<AbortController | null>(null);
+  const [brief, setBrief] = useState<Briefing | null>(null),
+    [briefSource, setBriefSource] = useState('모의 분석 중');
   const [state, setState] = useState<State | null>(null),
     [view, setView] = useState('home'),
     [selected, setSelected] = useState(''),
@@ -118,9 +123,13 @@ export default function Home() {
   useEffect(() => {
     let active = true;
     Promise.resolve()
-      .then(load)
+      .then(() => loadRemote(true))
       .then((s) => {
-        if (active) setState(s);
+        if (active) {
+          revisionRef.current = s.revision;
+          setState(s.state);
+          if (s.notice) setNotice(s.notice);
+        }
       })
       .catch((e) => {
         if (active) setError((e as Error).message);
@@ -129,6 +138,25 @@ export default function Home() {
       active = false;
     };
   }, []);
+  useEffect(() => {
+    if (!state) return;
+    const controller = new AbortController();
+    ai.briefing(state, controller.signal)
+      .then((result) => {
+        if (!controller.signal.aborted) {
+          setBrief(result);
+          setBriefSource('규칙 기반');
+        }
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) {
+          setBrief(buildMockBriefing(state));
+          setBriefSource('분석 지연 · 기본 규칙 안내');
+        }
+      });
+    return () => controller.abort();
+  }, [state]);
+  useEffect(() => () => requestRef.current?.abort(), []);
   useEffect(
     () => () => {
       if (preview) URL.revokeObjectURL(preview);
@@ -137,41 +165,66 @@ export default function Home() {
   );
   useEffect(() => {
     const sync = () => {
-      try {
-        setState(load());
-        setPending(null);
-      } catch (e) {
-        setError((e as Error).message);
-      }
+      if (mutationRef.current) return;
+      void loadRemote()
+        .then((snapshot) => {
+          if (mutationRef.current) return;
+          if (snapshot.revision !== revisionRef.current) {
+            requestRef.current?.abort();
+            revisionRef.current = snapshot.revision;
+            setState(snapshot.state);
+            setPending(null);
+            setNotice('다른 화면의 변경을 불러왔어요.');
+          }
+        })
+        .catch(() => {});
     };
-    window.addEventListener('storage', sync);
-    return () => window.removeEventListener('storage', sync);
+    window.addEventListener('focus', sync);
+    return () => window.removeEventListener('focus', sync);
   }, []);
   const go = (v: string) => {
+    requestRef.current?.abort();
+    setBusy(false);
     setView(v);
     setError('');
     setNotice('');
     setPending(null);
     window.scrollTo({ top: 0 });
   };
-  const commit = (next: State, message: string) => {
-    save(next);
-    setState(next);
-    setNotice(message);
+  const commit = async (mutation: Mutation, message: string) => {
+    if (mutationRef.current) return false;
+    mutationRef.current = true;
+    setSaving(true);
     setError('');
+    try {
+      const snapshot = await mutateRemote(mutation, revisionRef.current);
+      revisionRef.current = snapshot.revision;
+      setState(snapshot.state);
+      setNotice(message);
+      return true;
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const latest = await loadRemote();
+        revisionRef.current = latest.revision;
+        setState(latest.state);
+        setPending(null);
+      }
+      throw error;
+    } finally {
+      mutationRef.current = false;
+      setSaving(false);
+    }
   };
-  const execute = (c: Command) => {
+  const execute = async (c: Command) => {
     if (!state) return;
     try {
-      commit(apply(state, c), '냉장고에 반영했어요.');
-      setPending(null);
-    } catch (e) {
-      setError((e as Error).message);
-      setPending(null);
+      if (await commit({ kind: 'command', command: c }, '냉장고에 반영했어요.'))
+        setPending(null);
+    } catch (error) {
+      setError((error as Error).message);
     }
   };
   const list = state ? ranked(state) : [],
-    brief = state ? ai.briefing(state) : null,
     item = state?.items.find((i) => i.id === selected),
     urgent = list.filter((i) => i.days >= 0 && i.days <= 2),
     expired = list.filter((i) => i.days < 0);
@@ -181,36 +234,47 @@ export default function Home() {
     go('detail');
   };
   const analyze = async () => {
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     setError('');
     setBusy(true);
     setRows([]);
     try {
       if (source !== '직접 입력' && !preview)
         throw new Error('먼저 이미지를 선택해주세요.');
-      setRows(await ai.analyze({ source, text }));
+      const result = await ai.analyze({ source, text }, controller.signal);
+      if (controller.signal.aborted) return;
+      setRows(result);
       setBatch(id());
     } catch (e) {
-      setError((e as Error).message);
+      if (!(e instanceof AIServiceError && e.code === 'cancelled'))
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (requestRef.current === controller) setBusy(false);
     }
   };
   const ask = async () => {
     if (!state || !commandText.trim()) return;
+    requestRef.current?.abort();
+    const controller = new AbortController();
+    requestRef.current = controller;
     setBusy(true);
     setError('');
     setPending(null);
     try {
-      const result = await ai.interpret(commandText, state);
+      const result = await ai.interpret(commandText, state, controller.signal);
+      if (controller.signal.aborted) return;
       if ('message' in result) setAnswer(result.message);
       else {
         setPending(result);
         setAnswer('아래 변경 내용을 확인해주세요.');
       }
     } catch (e) {
-      setError((e as Error).message);
+      if (!(e instanceof AIServiceError && e.code === 'cancelled'))
+        setError((e as Error).message);
     } finally {
-      setBusy(false);
+      if (requestRef.current === controller) setBusy(false);
     }
   };
   const card = (i: (typeof list)[number], index?: number) => (
@@ -249,7 +313,7 @@ export default function Home() {
       </header>
       <main>
         <div className="mode-note">
-          <Sparkles size={14} /> 모의 AI 체험 · 데이터는 이 브라우저에 저장돼요
+          <Sparkles size={14} /> 모의 AI 체험 · 나만의 냉장고에 저장돼요
         </div>
         {error && (
           <div role="alert" className="alert">
@@ -259,6 +323,7 @@ export default function Home() {
             </button>
           </div>
         )}
+        {saving && <output className="success">냉장고에 저장 중…</output>}
         {notice && (
           <output className="success">
             <Check size={17} />
@@ -267,12 +332,23 @@ export default function Home() {
         )}
         {!state ? (
           <section className="panel">
-            <h1>냉장고를 준비하고 있어요</h1>
+            <h1>
+              {error
+                ? '냉장고 연결을 확인해주세요'
+                : '냉장고를 준비하고 있어요'}
+            </h1>
             {!error && <Skeleton className="h-40 w-full" />}
             {error && (
+              <button
+                className="primary wide"
+                onClick={() => window.location.reload()}
+              >
+                다시 연결하기
+              </button>
+            )}
+            {error && (
               <p>
-                저장 오류를 해결한 후 새로고침해주세요. 기존 데이터는 덮어쓰지
-                않아요.
+                서버 연결을 확인한 뒤 다시 시도해주세요. 기존 재고는 보존됩니다.
               </p>
             )}
           </section>
@@ -284,6 +360,7 @@ export default function Home() {
                   <div>
                     <p className="eyebrow">
                       {new Date().toLocaleDateString('ko-KR', {
+                        timeZone: 'Asia/Seoul',
                         month: 'long',
                         day: 'numeric',
                         weekday: 'long',
@@ -300,10 +377,10 @@ export default function Home() {
                     <span>
                       <Sparkles size={16} /> 오늘의 브리핑
                     </span>
-                    <span>규칙 기반</span>
+                    <span>{briefSource}</span>
                   </div>
                   <h2>
-                    {brief?.title}
+                    {brief?.title ?? '오늘의 재료를 살펴보고 있어요'}
                     <span className="accent-dot">.</span>
                   </h2>
                   <p>{brief?.message}</p>
@@ -470,7 +547,7 @@ export default function Home() {
                     </div>
                     <div>
                       <dt>등록일</dt>
-                      <dd>{item.createdAt.slice(0, 10)}</dd>
+                      <dd>{calendarDate(item.createdAt)}</dd>
                     </div>
                     <div>
                       <dt>예상 사용 시점</dt>
@@ -795,12 +872,21 @@ export default function Home() {
                     ))}
                     <button
                       className="primary wide"
-                      onClick={() => {
+                      disabled={saving}
+                      onClick={async () => {
                         try {
-                          commit(
-                            purchase(state, rows, batch, source),
-                            `${rows.length}가지 재료를 등록했어요.`,
-                          );
+                          if (
+                            !(await commit(
+                              {
+                                kind: 'purchase',
+                                rows,
+                                batchId: batch,
+                                source,
+                              },
+                              `${rows.length}가지 재료를 등록했어요.`,
+                            ))
+                          )
+                            return;
                           setRows([]);
                           setText('');
                           setView('fridge');
@@ -960,7 +1046,7 @@ export default function Home() {
                   데모 처음부터 다시 체험하기
                 </button>
                 <p className="footnote">
-                  이 브라우저의 기록과 재고가 데모 초기 상태로 바뀝니다.
+                  현재 냉장고의 기록과 재고가 데모 초기 상태로 바뀝니다.
                 </p>
               </>
             )}
@@ -983,7 +1069,11 @@ export default function Home() {
                   >
                     취소
                   </button>
-                  <button className="primary" onClick={() => execute(pending)}>
+                  <button
+                    className="primary"
+                    disabled={saving}
+                    onClick={() => void execute(pending)}
+                  >
                     확인하고 적용
                   </button>
                 </div>
@@ -1003,9 +1093,16 @@ export default function Home() {
                 <AlertDialogFooter>
                   <AlertDialogCancel>취소</AlertDialogCancel>
                   <AlertDialogAction
-                    onClick={() => {
+                    disabled={saving}
+                    onClick={async () => {
                       try {
-                        commit(seed(), '데모를 새로 준비했어요.');
+                        if (
+                          !(await commit(
+                            { kind: 'reset' },
+                            '데모를 새로 준비했어요.',
+                          ))
+                        )
+                          return;
                         setReset(false);
                         setView('home');
                       } catch (e) {

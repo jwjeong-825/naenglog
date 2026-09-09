@@ -1,8 +1,31 @@
 # 아키텍처
 
-Sites 공식 Vinext + React 19 + TypeScript + 기본 Shadcn 컴포넌트를 유지한다. 모바일 웹과 Sites 배포를 빠르게 연결하기 위한 선택이다.
+## 구성
+Sites 공식 Vinext + React 19 + TypeScript + Shadcn/Base UI를 유지한다. 서버는 Cloudflare Worker, 저장은 Sites가 제공하는 D1이다. 실제 AI API는 연결하지 않는다.
 
-UI → AIProvider(현재 Mock) → 검증된 Command/Draft → 도메인 함수 → 저장 어댑터 → UI.
-src/domain.ts: 순수 계산과 원장 갱신. src/ai.ts: 교체 가능한 async Provider. src/storage.ts: 버전 스냅샷 저장/검증. app/page.tsx: 화면 통합.
-Demo는 회원가입 없는 브라우저별 저장. 서버 DB는 아직 없고 localStorage는 관계형 DB를 대체하는 생산 환경 설계가 아니다. 구매·거래·분석 엔티티를 나눠 향후 서버 트랜잭션으로 이동한다.
-이미지는 브라우저 미리보기만 제공하고 저장·외부 전송하지 않는다. 실제 OCR이 없으므로 샘플 결과 표시. 실제 Provider는 향후 서버 경유하며 키를 클라이언트에 두지 않는다.
+UI → 비동기 AI service → 결과 검증 → 사용자 확인 → POST /api/inventory → 도메인 검증/계산 → D1 원자적 저장 → 최신 snapshot.
+
+- src/domain.ts: 수량/구매/원장/보관/우선순위. 모든 달력일은 Asia/Seoul.
+- src/validation.ts: 신뢰 경계의 Draft/Command/State 검증. 원장 연속성, 참조, 잔액, 중복 ID, 날짜 검사.
+- src/ai-service.ts: Provider 계약, JSON 검증, 취소, 타임아웃, 외부 오류 메시지 차단.
+- src/ai.ts: Mock 구현과 동기 기본 브리핑. 원격 구현 없음.
+- src/api.ts: 서버 통신, 15초 타임아웃, 검증된 legacy 가져오기.
+- src/server/repository.ts: D1 prepared statements, optimistic concurrency(CAS), 재전송 처리.
+- src/server/handlers.ts: HTTP/세션/Origin/본문 제한.
+- app/api/inventory/route.ts: 런타임 DB 바인딩 연결.
+- db/schema.ts, drizzle/: 생성된 스키마 마이그레이션. 런타임 DDL 없음.
+
+## DB 설계
+inventories(session_hash PK, snapshot JSON, revision, created_at, updated_at).
+snapshot 안에서 User/InventoryItem/Purchase/AIAnalysis/InventoryTransaction을 구분한다. 현재 제품은 냉장고 전체를 한 번에 읽고 원장과 잔액을 함께 변경하므로 aggregate를 택했다. UPDATE ... WHERE session_hash=? AND revision=? 한 문장으로 둘의 불일치와 lost update를 방지한다. 분석 쿼리가 필요한 시점에 관계형 테이블로 점진 전환한다.
+
+## 방문자 분리
+로그인 없이 256-bit 랜덤 세션을 HttpOnly, SameSite=Strict 쿠키로 발급한다. HTTPS에서는 Secure이며 최대 유지 기간은 1년이다. DB에는 토큰의 SHA-256만 저장한다. 재고 ID를 알더라도 다른 세션의 식재료는 수정할 수 없다. 응답은 no-store/Vary Cookie. POST는 동일 Origin, JSON과 최대 1MiB 본문만 받는다.
+쿠키를 지우면 기존 익명 냉장고에 다시 접근할 수 없다. 계정 연결/복구/다른 기기 동기화는 미구현이다. D1에 과거 익명 레코드의 자동 보존기간 정리는 아직 없으므로 실제 서비스 정책 결정 전 고려해야 한다.
+
+## 일관성과 가져오기
+서버 상태 revision이 요청과 다르면 409로 거절하고 UI에서 최신 값을 읽는다. 구매 batchId와 명령 id의 재전송은 다시 차감하지 않는다. reset은 명시 확인 후 진행한다.
+이전 localStorage snapshot은 서버 revision=0일 때만 검증 후 가져온다. 원본은 백업으로 보존하고 성공 표시를 로컬에 기록한다. 서버에 이미 변경이 있으면 가져오기로 덮어쓰지 않는다. 브라우저 저장소를 읽을 수 없어도 새 서버 데모는 사용할 수 있다.
+
+## 이미지와 AI
+이미지는 선택/미리보기만 하며 외부 전송·영구 저장하지 않는다. 현재 이미지 분석은 고정 샘플이다. 실제 Provider 연결은 사용자 승인 후 서버를 통해서만 수행한다. Provider가 날짜/수량을 직접 저장하지 않으며 최종 수정은 서버 도메인 로직이 담당한다.

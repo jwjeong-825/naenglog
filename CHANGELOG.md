@@ -10,3 +10,10 @@
 - React/Vinext/Vite/Cloudflare 의존성 수정 버전 적용. npm audit 0건 확인.
 - 로컬 HTTP 200 확인. 최종 배포 진행 중.
 - 비공개 배포 성공: https://naenglog-fridge.vk4yrj847p.chatgpt.site (공개 접근 승인 대기).
+
+## 2026-09-09 · 서버 저장과 신뢰 경계
+- D1 방문자별 저장, revision CAS, 요청 재전송 중복 차단, legacy snapshot 가져오기.
+- AI Provider의 비동기 계약, JSON 런타임 검증, 취소·타임아웃·오류 처리.
+- 거래 원장/잔액/날짜/참조 검증 및 모호한 자연어 명령 거절.
+- 한국 시간 자정 경계 오류 수정.
+- 테스트 21개, 타입·lint 통과. 실제 브라우저 등록→소비→새로고침→냉동 흐름 확인.

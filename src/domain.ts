@@ -1,3 +1,4 @@
+import { assertDraft, assertCommand, isQuantity } from './validation';
 export type Storage = '냉장' | '냉동' | '실온';
 export type Draft = {
   name: string;
@@ -46,10 +47,17 @@ export type State = {
   transactions: Transaction[];
   applied: string[];
 };
-export const today = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export const calendarDate = (value: Date | string) => {
+  const parts = new Intl.DateTimeFormat('en', {
+    timeZone: 'Asia/Seoul',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).formatToParts(new Date(value));
+  const part = (type: string) => parts.find((p) => p.type === type)!.value;
+  return `${part('year')}-${part('month')}-${part('day')}`;
 };
+export const today = () => calendarDate(new Date());
 export const id = () => crypto.randomUUID();
 export const addDays = (date: string, n: number) => {
   const d = new Date(`${date}T12:00:00Z`);
@@ -96,6 +104,7 @@ export function expected(d: Draft) {
   );
 }
 export function validateDraft(d: Draft) {
+  assertDraft(d);
   if (
     !d.name.trim() ||
     d.name.length > 60 ||
@@ -126,6 +135,10 @@ export function purchase(
     throw new Error('이미 등록한 구매내역이에요.');
   if (!rows.length || rows.length > 50)
     throw new Error('식재료를 1~50개 입력해주세요.');
+  rows = rows.map((d) => ({
+    ...d,
+    name: typeof d.name === 'string' ? d.name.trim() : d.name,
+  }));
   rows.forEach(validateDraft);
   const at = new Date().toISOString();
   const items = rows.map((d) => ({
@@ -160,6 +173,7 @@ export function purchase(
   };
 }
 export function apply(state: State, command: Command): State {
+  assertCommand(command);
   if (state.applied.includes(command.id))
     throw new Error('이미 적용한 요청이에요.');
   const item = state.items.find((i) => i.id === command.itemId);
@@ -183,7 +197,7 @@ export function apply(state: State, command: Command): State {
     const q = command.quantity;
     if (
       q === undefined ||
-      !Number.isFinite(q) ||
+      !isQuantity(q) ||
       q < 0 ||
       q > 10000 ||
       (command.action !== 'adjust' && q === 0)
@@ -230,7 +244,7 @@ export function ranked(state: State) {
         (t) =>
           t.itemId === i.id &&
           t.action === 'consume' &&
-          t.at.slice(0, 10) === today(),
+          calendarDate(t.at) === today(),
       );
       const score =
         100 -

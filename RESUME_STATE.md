@@ -1,50 +1,58 @@
-# 재개 상태 · 2026-09-08
+# 재개 상태 · 2026-09-09
 
-## 완료
-- 빈 저장소에서 공식 Sites React/Vinext/TypeScript 구조 생성.
-- PROJECT.md, PRODUCT_SPEC.md, CODEX_RULES.md, ARCHITECTURE.md, AI_PROVIDER_SETUP.md, README.md, CHANGELOG.md, TASK_QUEUE.md 생성.
-- src/domain.ts: 구매·재고·거래·날짜·우선순위. src/ai.ts: Mock 분석·명령·브리핑. src/storage.ts: 로컬 스냅샷 검증/복원.
-- app/page.tsx: 홈/냉장고/상세/구매추가/도우미/기록. 이미지 선택·미리보기·고정 샘플 분석·편집·등록, 명령 확인, 수량·보관 변경, 소비·폐기, 데모 초기화.
-- 외부 AI 호출 없음. 구매 이미지는 외부 전송/저장하지 않음. 샘플임을 UI에 표시.
-- 테스트 9/9 통과, typecheck 통과, 직접 작성 코드 lint 통과, 최종 build 성공, 개발 GET / HTTP 200.
-- npm audit 0건(React 19.2.8, Vinext beta.9, Vite 8.2.2, Cloudflare plugin 1.54.5, Wrangler 4.129.1).
-- 문서/도메인/모바일 데모의 의미 단위 Git 커밋, Sites 소스 저장소 push 완료.
+## 현재 작업
+D1 서버 저장과 AI 응답 검증 구현 완료, 최종 문서/빌드/배포 대기. 실제 AI API 호출 없음.
 
-## 배포
-- project_id: appgprj_6a9fec0734708191a285871bf04d3f0e (.openai/hosting.json 재사용. 새 Site 생성 금지)
-- 소스 SHA: 6af56b95fe55b18c563e3be213b4a45846960a1f
-- 버전: appgprj_6a9fec0734708191a285871bf04d3f0e~appgver_b565c3c7287481918b2d8fde73e1b13f
-- deployment_id: appgdep_6a9ff5066bf081919097ae7aa9bf8627
-- 비공개 배포 요청 완료. 종료 전 상태를 아래 결과에 기록할 것.
-- 공개 전환은 자동 승인 검토에서 '명시적 공개 대상 승인 부족'으로 거절. 우회 금지. 사용자에게 URL 보유자 누구나 접근 가능한 공개 데모 전환 승인을 받아야 함.
+## 이번 실행에서 완료
+- 이전 문서 전체와 Git 확인. 시작 시 작업 트리 깨끗, HEAD 6196a98. 이전 마지막 문서 커밋의 Sites push는 사용량 제한으로 실패했었음.
+- src/validation.ts: Draft/Command/State 런타임 검증, 거래 연속성·참조·잔액·정밀도 검사.
+- src/ai-service.ts: 비동기 Provider 계약(mock/fallback/remote 타입), JSON 검증, 타임아웃/취소/오류 구분. remote 구현은 없음.
+- src/ai.ts: Mock Provider 분리. 음수·혼합 명령 거절, 출발/목적 보관 구분.
+- src/domain.ts: 한국 날짜(Asia/Seoul), 등록/명령 검증. app/page.tsx: 비동기 브리핑, 취소, 서버 저장/오류/충돌 상태.
+- db/schema.ts + drizzle/0000_low_mandroid.sql 및 meta: inventories 테이블 생성. session_hash PK, snapshot, revision, created_at, updated_at.
+- src/server/repository.ts: 방문자별 스냅샷, 원장과 잔액 동시 저장, revision CAS, idempotent replay, 1회 legacy import.
+- src/server/handlers.ts + app/api/inventory/route.ts: GET/POST API, 256-bit 익명 세션 HttpOnly SameSite=Strict 쿠키, DB에는 세션 해시만 저장. Origin/JSON/본문 크기 검사.
+- src/api.ts: 서버 전용 저장, 15초 타임아웃, 기존 localStorage 백업 유지 후 가져오기. 현재 데이터의 source of truth는 D1.
+- .openai/hosting.json d1='DB' (기존 project_id 유지). Drizzle ORM 0.45.2 / kit 0.31.10 추가.
 
-## 미완료 및 다음 우선순위
-1. 공개 접근은 사용자 승인 이후에만 재시도. 현재 심사위원이 바로 쓸 공개 URL 완료 선언 금지.
-2. 실제 브라우저 클릭 E2E 및 모바일/스크린샷/접근성 검증. 현재 테스트는 도메인과 HTTP까지이며 UI E2E 아님.
-3. 현재 localStorage를 서버 DB로 전환하는 개인 세션 저장 설계. 브라우저별 데모이며 기기 간 동기화와 서버 DB는 아직 없음. 모든 사용자에게 동일한 전역 재고를 노출하지 말 것.
-4. 식품 예상기간 근거·개봉 상태·냉동 적합성 검토. 현재 값은 검증 전 데모 정책. 유통기한/안전 보장으로 표현 금지.
-5. 구매 동일 이미지 재분석 중복 탐지 강화, 명령 로트 선택 UX, 앱 컴포넌트 분리.
-6. 대회 규정/일정 확인, README 스크린샷·최종 제출 자료. 실제 AI는 사용자 명시 허가 전 금지.
+## 검증
+- npm test: 21/21 통과. 실제 SQLite 마이그레이션/방문자 격리/경쟁 수정/재전송/가져오기/CSRF 포함.
+- npm run lint, npm run typecheck 통과(마지막 세션 25762 exit 0).
+- 로컬 D1 마이그레이션 적용 완료. npm run dev 세션 28534, http://localhost:3000/. GET / 및 /api/inventory HTTP 200.
+- Browser 실제 UI 확인: 직접 입력 애호박 5개 → 분석 확인 → 서버 등록 → '애호박 2개 썼어' → 확인 적용 → 3개. 새로고침 후 유지. 상세 냉동 변경 → 3개 냉동 D-14 확인.
+- 모바일 390x844 홈 screenshot 확인. 등록일 UTC 오류 발견 후 한국 날짜로 수정 및 자정 테스트 추가. viewport override는 reset 완료.
+- Browser binding은 Node REPL browser, tab id 3. 기존 production tab id 4. 초기 CDP timeout은 tab.reload 후 해결. Browser 스킬과 전체 documentation 이미 읽음.
 
-## 알려진 한계
-- 실제 OCR/AI/메뉴 생성은 없음. 규칙과 샘플이며 수량·날짜는 도메인에서 계산.
-- 동일 이름 구매 로트가 여러 개면 자연어 실행을 거절하고 상세 선택 유도.
-- 저장 오류는 덮어쓰지 않고 알림. 자동 복구/내보내기는 미구현.
-- lint:all은 공식 vendored UI의 기존 경고를 포함. lint는 app/src/tests 대상이며 통과.
-- 초기 dev 번들 로딩 중 500/타임아웃 후 정상 HTTP 200 확인. 프로덕션 브라우저 실행은 별도 확인 필요.
+## 다음 정확한 작업
+1. PROJECT/PRODUCT_SPEC/ARCHITECTURE/AI_PROVIDER_SETUP/README/CHANGELOG를 서버 DB와 현재 검증 기준으로 갱신.
+2. 이미지 업로드 UI 시나리오와 스크린샷 기록. Browser filechooser API 사용; 지침 이미 읽음. 개인 이미지 대신 테스트 fixture 사용.
+3. 새 의존성 audit 확인: Drizzle kit 설치 후 dev transitive esbuild의 moderate 4건 보고. prod audit 별도 확인, 무조건 force update 금지.
+4. 최종 npm run build. 신규 migration 포함 package-site.sh 패키징. 타입/lint는 이미 통과했으나 추가 변경 시 재확인.
+5. 의미 단위 Git 커밋 → 기존 Sites source push → 새 버전 저장 → 비공개 배포 → production API/브라우저 확인.
+6. 실패/완료 결과와 정확한 IDs/URL/다음 작업을 이 문서에 갱신.
 
-## 실행
-Node/npm PATH:
-- C:/Users/jjw08/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin
-- $env:TEMP/naenglog-sites-setup/node_modules/.bin
-명령: npm ci; npm test; npm run typecheck; npm run lint; npm run build; npm run dev (각각 실행).
+## 현재 Git
+이 실행 변경은 아직 커밋 전. 기존 사용자 변경 없음. 주요 변경: .openai/hosting.json, app/page.tsx, package files, src/*, app/api/*, db/*, drizzle/*, tests/domain.test.mjs.
+
+## 배포와 제한
+- 기존 Site project_id appgprj_6a9fec0734708191a285871bf04d3f0e 재사용. 새 Site 생성 금지.
+- 현재 배포는 이전 localStorage 버전: https://naenglog-fridge.vk4yrj847p.chatgpt.site (본인 전용).
+- 공개 전환은 이전 자동 승인 검토가 '명시적 공개 대상 승인 부족'으로 거절. 우회하지 않고 별도 공개 승인 필요. 현재 사용자 재개 요청은 공개 전환 명시 승인이 아님.
+- 실 AI/OCR 없음. 식품 기간은 검증 전 데모 정책. 식품 근거 검토, 완전한 E2E 자동화, 공개 제출 URL, 제출 자료는 미완료.
+- DB는 개별 엔티티를 포함한 aggregate JSON을 단일 CAS로 저장. 분석용 관계형 정규화는 후순위. 쿠키 삭제 시 기존 익명 재고 복구/다른 기기 동기화 불가. 계정/복구 UI는 미구현.
+
+## 명령 및 환경
+Node PATH: C:/Users/jjw08/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin
+npm PATH: $env:TEMP/naenglog-sites-setup/node_modules/.bin
 Git: C:/Users/jjw08/.cache/codex-runtimes/codex-primary-runtime/dependencies/native/git/cmd/git.exe
-샌드박스 소유권 경고는 명령별 -c safe.directory=저장소 절대경로. .git 변경은 승인된 실행으로 수행.
-Windows 패키지 교체 전 dev 서버를 종료해 EBUSY를 방지. peer 검증을 끄거나 공급망 정책을 우회하지 말 것.
-공식 package-site.sh는 CRLF라 ignored work/packager에 LF 정규화 사본을 사용. work/package-windows.sh가 WSL에서 Windows Node 인자를 변환하며 공식 패키저 실행. 생성 archive는 work/site.tar.gz, 소스 트리가 아니라 검증된 dist만 포함.
+git은 명령별 -c safe.directory=저장소절대경로, 쓰기는 승인된 실행 사용.
+Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에서 성공. 의존성 교체 전 dev 종료하여 Windows EBUSY 방지.
+로컬 DB: wrangler d1 migrations apply DB --local --config work/d1-local.json --persist-to .wrangler/state
+패키징: 기존 ignored work/package-windows.sh가 공식 LF 정규화 스크립트를 WSL/Windows Node로 실행. 새 build 완료 후 bash work/package-windows.sh.
 
-## 배포 완료
-2026-09-08 deployment status=succeeded 확인.
-URL: https://naenglog-fridge.vk4yrj847p.chatgpt.site
-본인 전용 비공개 배포. 공개 심사 URL로 제출 가능한 상태는 아직 아님. 앱에서 배포 URL 열기 요청 완료. 다음 작업은 공개 승인 확인과 브라우저 E2E.
-최종 typecheck와 build 통과. 개발 서버는 종료됨. 필요 시 npm run dev로 재시작.
+## 후속 검증 업데이트
+- 이미지 업로드/모의 분석/4개 등록 성공. docs/screenshots/mobile-home.png 저장, viewport 원복.
+- 최종 build exit 0, prod audit 0. 전체 audit dev moderate 4건.
+- README 및 docs/QA.md 갱신. 재현용 wrangler.local.json 및 db 스크립트 추가.
+- 다음은 Git 커밋, 패키징, push/save/private deploy 및 운영 확인.
+
