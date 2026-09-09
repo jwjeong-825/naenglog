@@ -28,7 +28,13 @@ snapshot 안에서 User/InventoryItem/Purchase/AIAnalysis/InventoryTransaction�
 이전 localStorage snapshot은 서버 revision=0일 때만 검증 후 가져온다. 원본은 백업으로 보존하고 성공 표시를 로컬에 기록한다. 서버에 이미 변경이 있으면 가져오기로 덮어쓰지 않는다. 브라우저 저장소를 읽을 수 없어도 새 서버 데모는 사용할 수 있다.
 
 ## 이미지와 AI
-이미지는 선택/미리보기만 하며 외부 전송·영구 저장하지 않는다. 현재 이미지 분석은 고정 샘플이다. 실제 Provider 연결은 사용자 승인 후 서버를 통해서만 수행한다. Provider가 날짜/수량을 직접 저장하지 않으며 최종 수정은 서버 도메인 로직이 담당한다.
+이미지는 선택/미리보기 후 분석 시 서비스 서버로 전달하며 영구 저장하지 않는다. 외부 AI 전송은 아직 없다. 현재 이미지 분석은 고정 샘플이다. 실제 Provider 연결은 사용자 승인 후 서버를 통해서만 수행한다. Provider가 날짜/수량을 직접 저장하지 않으며 최종 수정은 서버 도메인 로직이 담당한다.
 
 ## 상품 해석 경계
 Draft.meaning optional v1로 기존 snapshot/DB migration 없이 호환한다. src/product.ts가 Mock 의미 해석을 수행하고 app/product-review.tsx가 수정/확인을 제공한다. 서버 등록에서 미확인 의미/잘못된 총량을 거절한다. 구매 총량은 재고 소비 이후에도 원본 의미로 보존된다.
+
+## 서버 AI 게이트웨이
+
+src/ai-client.ts → app/api/ai/route.ts → src/server/ai-handlers.ts → src/server/ai-provider.ts → AIProvider. 현재 Mock도 이 경로로 실행된다. 분석은 src/analysis.ts 및 schemas/analysis-result.schema.json의 envelope를 사용한다. 이미지 공통 제한은 src/image-input.ts. HTTP 입력은 크기 제한 스트림을 읽고 서버 세션의 D1 상태로 interpret/briefing을 실행한다.
+
+실제 어댑터는 서버 composition root에만 추가한다. 환경변수는 Cloudflare 서버 env에서 읽고 브라우저 번들로 전달하지 않는다. remote는 미구현 상태에서 503으로 닫히며 재고 조회 자체는 AI 설정 오류와 분리한다.

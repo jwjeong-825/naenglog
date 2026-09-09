@@ -17,7 +17,27 @@ export const mockProvider: AIProvider = {
           ];
     if (!lines.length)
       throw new Error('식재료를 한 줄에 하나씩 입력해주세요. 예: 계란 10개');
-    return lines.map(interpretProduct);
+    const rows = [],
+      unresolved = [];
+    for (const line of lines) {
+      try {
+        rows.push(interpretProduct(line));
+      } catch {
+        unresolved.push({
+          productName: line.slice(0, 120),
+          reason: '수량/단위를 읽지 못했어요. 직접 입력에서 수정해주세요.',
+        });
+      }
+    }
+    return {
+      version: 1,
+      rows,
+      unresolved,
+      warnings:
+        source === '직접 입력'
+          ? []
+          : ['실제 이미지 인식이 아닌 고정 상품 예시입니다.'],
+    };
   },
   async interpret(text, state) {
     const value = text.trim();

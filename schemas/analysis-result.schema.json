@@ -1,0 +1,237 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Naenglog AnalysisResult v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "version",
+    "rows",
+    "unresolved",
+    "warnings"
+  ],
+  "properties": {
+    "version": {
+      "const": 1
+    },
+    "rows": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "productName",
+          "quantity",
+          "unit",
+          "category",
+          "purchasedAt",
+          "storage",
+          "meaning"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          },
+          "productName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "quantity": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "maximum": 10000,
+            "multipleOf": 0.001
+          },
+          "unit": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 10
+          },
+          "category": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 40
+          },
+          "purchasedAt": {
+            "type": "string",
+            "format": "date"
+          },
+          "storage": {
+            "enum": [
+              "냉장",
+              "냉동",
+              "실온"
+            ]
+          },
+          "meaning": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "version",
+              "normalizedFoodName",
+              "brand",
+              "weightPerUnit",
+              "weightUnit",
+              "totalWeight",
+              "packaging",
+              "storageCandidates",
+              "processed",
+              "openingSensitive",
+              "confidence",
+              "reasons",
+              "confirmed"
+            ],
+            "properties": {
+              "version": {
+                "const": 1
+              },
+              "normalizedFoodName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 60
+              },
+              "brand": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 60
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "weightPerUnit": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 10000,
+                    "multipleOf": 0.001
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "weightUnit": {
+                "enum": [
+                  "g",
+                  "kg",
+                  "ml",
+                  "L",
+                  null
+                ]
+              },
+              "totalWeight": {
+                "anyOf": [
+                  {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "maximum": 100000000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "packaging": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 40
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "storageCandidates": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 3,
+                "items": {
+                  "enum": [
+                    "냉장",
+                    "냉동",
+                    "실온"
+                  ]
+                }
+              },
+              "processed": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "openingSensitive": {
+                "type": [
+                  "boolean",
+                  "null"
+                ]
+              },
+              "confidence": {
+                "enum": [
+                  "high",
+                  "low"
+                ]
+              },
+              "reasons": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 5,
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 300
+                }
+              },
+              "confirmed": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "unresolved": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "productName",
+          "reason"
+        ],
+        "properties": {
+          "productName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 300
+      }
+    }
+  }
+}

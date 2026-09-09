@@ -1,10 +1,13 @@
+import { validateAnalysis, type AnalysisResult } from './analysis';
+import type { ImageInput } from './image-input';
 import type { Command, Draft, State } from './domain';
-import { assertCommand, assertDraft, isRecord } from './validation';
+import { assertCommand, isRecord } from './validation';
 export type ProviderMode = 'mock' | 'fallback' | 'remote';
 export type Briefing = { title: string; message: string; menu: string };
 export type Interpretation = Command | { message: string };
 export type AnalyzeInput = {
   source: string;
+  image?: ImageInput;
   text?: string;
   recognition?: { text: string; purchasedAt?: string; assetId?: string };
 };
@@ -103,19 +106,26 @@ export function createAIService(provider: AIProvider, timeoutMs = 5000) {
     );
   return {
     mode: provider.mode,
+    analyzeDetailed: (input: AnalyzeInput, signal?: AbortSignal) =>
+      request<AnalysisResult>(
+        (o) => provider.analyze(input, o),
+        (raw) => {
+          try {
+            return validateAnalysis(raw);
+          } catch {
+            throw invalid();
+          }
+        },
+        signal,
+      ),
     analyze: (input: AnalyzeInput, signal?: AbortSignal) =>
       request<Draft[]>(
         (o) => provider.analyze(input, o),
         (raw) => {
           try {
-            if (!Array.isArray(raw) || raw.length < 1 || raw.length > 50)
-              throw invalid();
-            raw.forEach(assertDraft);
-            return structuredClone(raw).map((d) =>
-              d.meaning
-                ? { ...d, meaning: { ...d.meaning, confirmed: false } }
-                : d,
-            );
+            const result = validateAnalysis(raw);
+            if (!result.rows.length) throw invalid();
+            return result.rows;
           } catch {
             throw invalid();
           }

@@ -23,7 +23,10 @@ export interface Database {
   };
 }
 export class InventoryRepository {
-  constructor(private db: Database) {}
+  constructor(
+    private db: Database,
+    private provider: 'mock' | 'remote' | 'fallback' = 'mock',
+  ) {}
   async find(session: string): Promise<Snapshot | null> {
     const row = await this.db
       .prepare(
@@ -101,6 +104,7 @@ export class InventoryRepository {
         request.rows,
         request.batchId,
         String(request.source),
+        this.provider,
       );
     } else if (request.kind === 'reset') next = seed();
     else if (request.kind === 'import') {

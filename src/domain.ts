@@ -41,7 +41,7 @@ export type State = {
   purchases: { id: string; source: string; at: string }[];
   analyses: {
     id: string;
-    provider: 'mock';
+    provider: 'mock' | 'remote' | 'fallback';
     source: string;
     at: string;
     result: Draft[];
@@ -132,6 +132,7 @@ export function purchase(
   rows: Draft[],
   batchId: string,
   source: string,
+  provider: 'mock' | 'remote' | 'fallback' = 'mock',
 ): State {
   if (state.purchases.some((p) => p.id === batchId))
     throw new Error('이미 등록한 구매내역이에요.');
@@ -170,7 +171,7 @@ export function purchase(
     purchases: [...state.purchases, { id: batchId, source, at }],
     analyses: [
       ...state.analyses,
-      { id: batchId, provider: 'mock', source, at, result: rows },
+      { id: batchId, provider, source, at, result: rows },
     ],
     transactions: [
       ...state.transactions,

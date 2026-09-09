@@ -11,7 +11,7 @@ function response(body: unknown, status = 200, cookie?: string) {
     headers: { ...headers, ...(cookie ? { 'Set-Cookie': cookie } : {}) },
   });
 }
-async function sessionHash(token: string) {
+export async function sessionHash(token: string) {
   const data = await crypto.subtle.digest(
     'SHA-256',
     new TextEncoder().encode(token),
@@ -20,7 +20,7 @@ async function sessionHash(token: string) {
     b.toString(16).padStart(2, '0'),
   ).join('');
 }
-function readToken(request: Request) {
+export function readToken(request: Request) {
   const token = request.headers
     .get('Cookie')
     ?.split(';')

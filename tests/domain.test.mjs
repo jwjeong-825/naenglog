@@ -9,6 +9,10 @@ const out = path.join(tmpdir(), 'naenglog-tests-' + Date.now());
 mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
+  'analysis',
+  'image-input',
+  'server/ai-provider',
+  'server/ai-handlers',
   'product',
   'validation',
   'domain',
@@ -477,4 +481,163 @@ test('expired inventory takes precedence even with usable inventory', () => {
   milk.expectedAt = d.addDays(d.today(), -1);
   assert.match(buildMockBriefing(state).title, /우유.*상태 확인/);
   assert.equal(buildMockBriefing(state).menu, '');
+});
+
+test('partial recognition preserves unresolved products and resets provider confirmation', async () => {
+  const result = await ai.analyzeDetailed({
+    source: '직접 입력',
+    text: '계란 10개\n알 수 없는 상품',
+  });
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.unresolved.length, 1);
+  const service = createAIService({
+    mode: 'remote',
+    analyze: async () => ({
+      ...result,
+      rows: result.rows.map((r) => ({
+        ...r,
+        meaning: { ...r.meaning, confirmed: true },
+      })),
+    }),
+  });
+  assert.equal(
+    (await service.analyzeDetailed({ source: '영수증' })).rows[0].meaning
+      .confirmed,
+    false,
+  );
+  const broken = createAIService({
+    mode: 'remote',
+    analyze: async () => ({
+      ...result,
+      rows: [{ ...result.rows[0], meaning: undefined }],
+    }),
+  });
+  await assert.rejects(broken.analyzeDetailed({ source: '영수증' }));
+});
+test('server AI requires own session, validates image bytes, and runs without external AI', async () => {
+  const { createAIHandler } = await import(
+    pathToFileURL(path.join(out, 'server/ai-handlers.mjs'))
+  );
+  const { repository: r, sql } = makeRepository();
+  try {
+    const inventory = createInventoryHandlers(r);
+    const first = await inventory.GET(
+      new Request('https://naenglog.test/api/inventory'),
+    );
+    const cookie = first.headers.get('set-cookie').split(';')[0];
+    const aiHandler = createAIHandler(r, {});
+    const send = (body, extra = {}) =>
+      aiHandler(
+        new Request('https://naenglog.test/api/ai', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://naenglog.test',
+            'Content-Type': 'application/json',
+            Cookie: cookie,
+            ...extra,
+          },
+          body: JSON.stringify(body),
+        }),
+      );
+    assert.equal(
+      (await send({ operation: 'briefing' }, { Origin: 'https://evil.test' }))
+        .status,
+      403,
+    );
+    assert.equal(
+      (await send({ operation: 'briefing' }, { Cookie: '' })).status,
+      401,
+    );
+    assert.equal(
+      (
+        await send({
+          operation: 'analyze',
+          input: {
+            source: '영수증',
+            image: { mimeType: 'image/png', base64: btoa('not png') },
+          },
+        })
+      ).status,
+      400,
+    );
+    const image = {
+      mimeType: 'image/png',
+      base64: readFileSync('tests/fixtures/receipt.png').toString('base64'),
+    };
+    const analysis = await send({
+      operation: 'analyze',
+      input: { source: '영수증', image },
+    });
+    assert.equal(analysis.status, 200);
+    const body = await analysis.json();
+    assert.equal(body.mode, 'mock');
+    assert.equal(body.result.rows.length, 4);
+    assert.ok(body.result.warnings.length);
+    assert.ok(body.result.rows.every((r) => !r.meaning.confirmed));
+    const move = await send({
+      operation: 'interpret',
+      text: '닭가슴살 냉동으로 옮겼어',
+    });
+    assert.equal((await move.json()).result.storage, '냉동');
+    const disabled = createAIHandler(r, {
+      AI_PROVIDER: 'remote',
+      AI_API_KEY: 'not-a-real-key',
+    });
+    const unavailable = await disabled(
+      new Request('https://naenglog.test/api/ai', {
+        method: 'POST',
+        headers: {
+          Origin: 'https://naenglog.test',
+          'Content-Type': 'application/json',
+          Cookie: cookie,
+        },
+        body: JSON.stringify({ operation: 'briefing' }),
+      }),
+    );
+    assert.equal(unavailable.status, 503);
+    assert.ok(!(await unavailable.text()).includes('not-a-real-key'));
+  } finally {
+    sql.close();
+  }
+});
+test('image input rejects oversized data and MIME mismatch', async () => {
+  const { validateImage, MAX_IMAGE_BYTES } = await import(
+    pathToFileURL(path.join(out, 'image-input.mjs'))
+  );
+  assert.throws(() =>
+    validateImage({
+      mimeType: 'image/png',
+      base64: 'A'.repeat(Math.ceil(MAX_IMAGE_BYTES / 3) * 4 + 4),
+    }),
+  );
+  assert.throws(() =>
+    validateImage({
+      mimeType: 'image/jpeg',
+      base64: readFileSync('tests/fixtures/receipt.png').toString('base64'),
+    }),
+  );
+});
+
+test('representative mock pipeline supports confirmed purchase, briefing, consumption and storage move', async () => {
+  const result = await ai.analyzeDetailed({ source: '영수증' });
+  const initial = d.seed();
+  for (const key of [
+    'items',
+    'purchases',
+    'analyses',
+    'transactions',
+    'applied',
+  ])
+    initial[key] = [];
+  result.rows.forEach((r) => (r.meaning.confirmed = true));
+  let state = d.purchase(initial, result.rows, 'demo-full', '영수증');
+  assert.ok((await ai.briefing(state)).title);
+  state = d.apply(state, await ai.interpret('계란 3개 썼어', state));
+  assert.equal(state.items.find((i) => i.name === '계란').quantity, 7);
+  state = d.apply(state, await ai.interpret('닭가슴살 냉동으로 옮겼어', state));
+  assert.equal(state.items.find((i) => i.name === '닭가슴살').storage, '냉동');
+  const { assertState } = await import(
+    pathToFileURL(path.join(out, 'validation.mjs'))
+  );
+  assertState(state);
 });

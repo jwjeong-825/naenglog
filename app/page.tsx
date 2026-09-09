@@ -1,6 +1,6 @@
 'use client';
 import { ProductReview } from './product-review';
-/* Local blob previews must remain unoptimized; they never leave the browser. */
+/* Preview uses a local blob URL; analysis sends validated bytes to our server. */
 /* eslint-disable next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -38,7 +38,9 @@ import {
   AlertDialogCancel,
   AlertDialogAction,
 } from '@/components/ui/alert-dialog';
-import { ai, buildMockBriefing } from '../src/ai';
+import { buildMockBriefing } from '../src/ai';
+import { ai } from '../src/ai-client';
+import { encodeImage } from '../src/image-input';
 import { AIServiceError, type Briefing } from '../src/ai-service';
 import {
   ranked,
@@ -114,6 +116,8 @@ export default function Home() {
     [text, setText] = useState(''),
     [preview, setPreview] = useState(''),
     [fileName, setFileName] = useState(''),
+    [imageFile, setImageFile] = useState<File | null>(null),
+    [providerMode, setProviderMode] = useState('mock'),
     [rows, setRowsRaw] = useState<Draft[]>([]),
     [batch, setBatch] = useState(''),
     [commandText, setCommandText] = useState(''),
@@ -129,6 +133,9 @@ export default function Home() {
         if (active) {
           revisionRef.current = s.revision;
           setState(s.state);
+          ai.config()
+            .then(setProviderMode)
+            .catch(() => {});
           if (s.notice) setNotice(s.notice);
         }
       })
@@ -146,7 +153,14 @@ export default function Home() {
       .then((result) => {
         if (!controller.signal.aborted) {
           setBrief(result);
-          setBriefSource('규칙 기반');
+          setBriefSource(
+            ai.mode === 'mock'
+              ? '규칙 기반'
+              : ai.mode === 'fallback'
+                ? '기본 규칙'
+                : 'AI 분석',
+          );
+          setProviderMode(ai.mode);
         }
       })
       .catch(() => {
@@ -271,9 +285,27 @@ export default function Home() {
     try {
       if (source !== '직접 입력' && !preview)
         throw new Error('먼저 이미지를 선택해주세요.');
-      const result = await ai.analyze({ source, text }, controller.signal);
+      const image =
+        source !== '직접 입력' && imageFile
+          ? await encodeImage(imageFile)
+          : undefined;
+      const result = await ai.analyze(
+        { source, text, image },
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
-      setRows(result);
+      setRows(result.rows);
+      setNotice(
+        [
+          ...result.warnings,
+          ...result.unresolved.map((x) => x.productName + ': ' + x.reason),
+        ].join(' '),
+      );
+      if (!result.rows.length)
+        setError(
+          '인식한 상품이 없어요. 직접 입력에서 상품명과 수량을 적어주세요.',
+        );
+      setProviderMode(ai.mode);
       setBatch(id());
     } catch (e) {
       if (!(e instanceof AIServiceError && e.code === 'cancelled'))
@@ -341,7 +373,9 @@ export default function Home() {
       </header>
       <main>
         <div className="mode-note">
-          <Sparkles size={14} /> 모의 AI 체험 · 나만의 냉장고에 저장돼요
+          <Sparkles size={14} />{' '}
+          {providerMode === 'mock' ? '모의 AI 체험' : 'AI 분석'} · 나만의
+          냉장고에 저장돼요
         </div>
         {error && (
           <div role="alert" className="alert">
@@ -701,6 +735,8 @@ export default function Home() {
                 <Tabs
                   value={source}
                   onValueChange={(v) => {
+                    requestRef.current?.abort();
+                    setBusy(false);
                     setSource(String(v));
                     setRows([]);
                     setError('');
@@ -724,6 +760,8 @@ export default function Home() {
                           rows={5}
                           value={text}
                           onChange={(e) => {
+                            requestRef.current?.abort();
+                            setBusy(false);
                             setText(e.target.value);
                             setRows([]);
                           }}
@@ -750,6 +788,7 @@ export default function Home() {
                             setRows([]);
                             setPreview('');
                             setFileName('');
+                            setImageFile(null);
                             if (
                               ![
                                 'image/jpeg',
@@ -763,6 +802,7 @@ export default function Home() {
                               );
                               return;
                             }
+                            setImageFile(file);
                             setPreview(URL.createObjectURL(file));
                             setFileName(file.name);
                             setError('');
@@ -783,9 +823,11 @@ export default function Home() {
                         />
                       )}
                       <p className="mock-warning">
-                        현재는 이미지 인식 없이 예시 재료 4개를 보여줍니다. 사진
-                        속 실제 구매내역과 다를 수 있어요. 이미지는 외부로
-                        전송하지 않습니다.
+                        {providerMode === 'mock'
+                          ? '현재는 실제 인식 없이 예시 재료 4개를 보여줍니다. 사진 속 구매내역과 다를 수 있어요.'
+                          : '이미지에서 상품을 분석합니다. 결과를 확인한 뒤 등록해주세요.'}{' '}
+                        이미지는 분석을 위해 이 서비스 서버로 전송되며 저장하지
+                        않습니다.
                       </p>
                     </>
                   )}
@@ -796,10 +838,12 @@ export default function Home() {
                   >
                     <Sparkles size={17} />
                     {busy
-                      ? '모의 분석 중…'
+                      ? '분석 중…'
                       : source === '직접 입력'
                         ? '입력 내용 정리하기'
-                        : '예시 분석 체험하기'}
+                        : providerMode === 'mock'
+                          ? '예시 분석 체험하기'
+                          : '이미지 분석하기'}
                   </button>
                 </section>
                 {rows.length > 0 && (
@@ -1013,6 +1057,8 @@ export default function Home() {
                       id="command"
                       value={commandText}
                       onChange={(e) => {
+                        requestRef.current?.abort();
+                        setBusy(false);
                         setCommandText(e.target.value);
                         setPending(null);
                       }}
@@ -1036,8 +1082,10 @@ export default function Home() {
                   </div>
                 )}
                 <p className="footnote">
-                  현재는 예시 표현을 이해하는 규칙 기반 도우미예요. 변경은 확인
-                  후 적용됩니다.
+                  {providerMode === 'mock'
+                    ? '현재는 예시 표현을 이해하는 규칙 기반 도우미예요.'
+                    : 'AI가 요청을 해석합니다.'}{' '}
+                  변경은 확인 후 적용됩니다.
                 </p>
               </>
             )}

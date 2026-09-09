@@ -91,3 +91,17 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 ## GitHub 완료
 02114b5: 브리핑 행동 연결/상품 의미 확인 구현과 문서. main push 성공. 다음은 TASK_QUEUE.md의 제출 UX/정책 표시 점검이며 실제 AI 연결과 기능 확장은 하지 않는다.
+
+## 최신 체크포인트 · AI 연결 직전
+
+- UI AI 호출을 src/ai-client.ts와 /api/ai 서버 경유로 통일했다. 서버는 세션의 D1 상태를 읽는다.
+- src/server/ai-provider.ts에 환경설정/선택 지점, remote 구현 없음(503). AI_API_KEY/AI_MODEL은 빈 예시만 제공하고 호출하지 않았다.
+- src/analysis.ts + schemas/analysis-result.schema.json: version/rows/unresolved/warnings. 새 분석 meaning 필수, confirmed 무조건 false. 기존 DB 데이터 호환 유지.
+- src/image-input.ts: 원본5MiB, JPEG/PNG/WebP 및 파일 헤더 검사. 서버 요청7MiB 제한. 원본 이미지 영구 저장 안 함.
+- .env.example 추가, .env/.dev.vars/.key는 ignore. 실제 키 없음.
+- 테스트27개 통과, typecheck/lint 및 첫 build 통과. 서버 이미지 UI 검사 완료. 입력 변경 취소/모드 문구 보강 후 최종 build 확인 중.
+- 다음: 최종 build 확인/브라우저 이미지 결과/클라이언트 번들 키 경계 검사→GitHub push. 이후 실제 활성화 전 픽셀/EXIF 처리, 비용 한도/호출 제한, 공급자 실측 평가가 우선.
+- 현재 운영 Sites는 여전히 버전2이며 이번 변경은 미배포. 실제 API 연결은 사용자 승인 전 금지.
+
+## 최종 검증 결과
+테스트27/27, typecheck/lint, 최종 build exit0(82141). /api/ai와 /api/inventory 빌드 포함. 클라이언트 번들 키 설정/서버 미구현 코드 검색 일치 없음. 실제 이미지 fixture 서버 분석4개와 부분 인식 UI 확인 완료. 이 변경을 GitHub main에 커밋/push하며 운영 Sites는 변경하지 않았다. 최신 커밋은 git log -1로 확인한다.

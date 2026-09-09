@@ -148,7 +148,7 @@ export function assertState(value: unknown): asserts value is State {
     if (
       !isRecord(a) ||
       !purchases.has(a.id) ||
-      a.provider !== 'mock' ||
+      !['mock', 'remote', 'fallback'].includes(String(a.provider)) ||
       !text(a.source) ||
       !instant(a.at) ||
       !Array.isArray(a.result) ||
