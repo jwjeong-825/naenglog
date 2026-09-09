@@ -63,3 +63,7 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 패키징: 기존 ignored work/package-windows.sh가 공식 LF 정규화 스크립트를 WSL/Windows Node로 실행. 새 build 완료 후 bash work/package-windows.sh.
 
 
+
+## 사용자 추가 지침
+GitHub 기록에 필요한 정보나 권한은 사용자에게 요청한다(2026-09-09). 현재 업로드 완료 대상은 Sites 소스 저장소이며 GitHub 저장소 주소는 아직 지정되지 않았다. GitHub 연결 시 대상 저장소 URL을 먼저 받고, 필요하면 안전한 로그인 절차를 안내한다.
+
