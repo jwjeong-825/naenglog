@@ -29,6 +29,7 @@
 - 계정 기반 복구/기기 간 공유, DB 보존기간/정리, 관계형 분석 쿼리, PWA.
 - 개발 의존성 moderate 4건의 호환 가능한 upstream 해결 추적.
 
-## 즉시 재개할 GitHub 작업
-- 공개 저장소 생성 및 origin/main 연결 승인됨(jwjeong-825/naenglog 우선). 테스트/이력 민감정보 패턴 검사 완료. 작업용 브라우저 로그인 확인 후 생성과 push 진행. 아직 GitHub 저장소 생성 성공을 보고하지 말 것.
+## GitHub 완료
+- jwjeong-825/naenglog 공개 저장소 생성, origin/main 연결, 기존 코드/필수 문서/커밋 이력 push 성공.
+- 이후 의미 있는 단위로 공식 GitHub 저장소에 commit/push한다.
 

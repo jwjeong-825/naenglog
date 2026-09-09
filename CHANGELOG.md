@@ -22,5 +22,6 @@
 
 
 ## GitHub 공식 저장소
-- jwjeong-825/naenglog 공개 저장소 생성. 기존 프로젝트와 커밋 이력을 공식 main 브랜치로 연결 준비.
+- jwjeong-825/naenglog 공개 저장소 생성. 기존 프로젝트와 커밋 이력을 공식 main 브랜치에 push 완료. origin/main 추적 설정.
+
 

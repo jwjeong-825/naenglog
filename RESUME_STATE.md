@@ -64,20 +64,13 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 
 
-## 사용자 추가 지침
-GitHub 기록에 필요한 정보나 권한은 사용자에게 요청한다(2026-09-09). 현재 업로드 완료 대상은 Sites 소스 저장소이며 GitHub 저장소 주소는 아직 지정되지 않았다. GitHub 연결 시 대상 저장소 URL을 먼저 받고, 필요하면 안전한 로그인 절차를 안내한다.
+## 공식 GitHub 저장소 · 연결 완료
 
-
-## GitHub 공개 저장소 준비 · 최신 사용자 지침
-- Owner jwjeong-825, Public, 우선 이름 naenglog(중복 시 naenglog-ai). README/gitignore는 기존 파일 사용, 라이선스 추가 안 함. 사용자 명시 생성/push 승인 있음.
-- GitHub를 공식 origin/main으로 사용할 예정. Sites는 배포 소스용으로 별도 유지. GitHub 공개 승인은 Sites 접근 정책 변경 승인이 아님.
-- 현재 저장소 생성/remote/push는 아직 미완료. 연결 GitHub 계정 jwjeong-825 확인했으나 생성 도구가 없고, 작업용 앱 내 브라우저에는 로그인 화면이 표시됨. 사용자 로그인 완료 응답 이후에도 동일 상태이며 새 탭에서 재확인했음.
-- 공개 전 재검증: npm test 21/21, typecheck/lint 통과. 모든 Git 이력의 135개 blob을 키/토큰/개인키/인증 URL 패턴 및 민감 파일명으로 검사하여 탐지 없음. 이력 작성자 전부 Codex/codex@local.invalid. .env/DB/빌드/work는 추적되지 않음.
-- 다음: 앱 내 GitHub 로그인 확인 → public 저장소 생성 → origin 연결 → 문서 갱신/커밋 → main push → 원격 코드/필수 문서 및 SHA 검증.
-
-
-## GitHub 생성 완료 체크포인트
-- https://github.com/jwjeong-825/naenglog 공개 저장소 생성 완료. README/gitignore/license 자동 초기화 없음.
-- Windows Git 인증 계정 jwjeong-825 확인. origin 연결 및 main 최초 push 진행.
-- 이후 공식 기록은 GitHub origin/main, Sites 배포 소스는 별도 유지한다.
-
+- Owner: jwjeong-825. Public 저장소: https://github.com/jwjeong-825/naenglog
+- origin: https://github.com/jwjeong-825/naenglog.git, main이 origin/main 추적. 기존 커밋 이력을 보존하여 최초 push 성공(2817c1d).
+- 저장소 생성 시 README/gitignore/license 자동 초기화 없음. 필수 문서와 AI_PROVIDER_SETUP.md 포함.
+- 공개 전 검사: 테스트 21/21, typecheck/lint 통과. Git 이력 135개 blob의 키/토큰/개인키/인증 URL 패턴 및 민감 파일명 검사에서 탐지 없음. 작성자 Codex/codex@local.invalid. .env/DB/빌드/work는 추적되지 않음.
+- 이후 의미 있는 기능/설계/문서 변경 시 commit → GitHub main push. Sites 저장소는 배포 소스용으로 별도 사용한다.
+- GitHub 인증이 다시 필요할 때만 최소 로그인 행동을 요청하며 토큰/비밀번호를 대화에 요구하지 않는다.
+- GitHub 공개 승인은 Sites의 공개 접근 변경 승인이 아니다. 실제 AI API 연결 금지 유지.
+- 후속 문서 정리 커밋은 git log -1로 확인. 다음 제품 작업은 TASK_QUEUE.md 순서대로 진행한다.
