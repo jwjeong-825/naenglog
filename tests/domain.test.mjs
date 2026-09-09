@@ -9,6 +9,7 @@ const out = path.join(tmpdir(), 'naenglog-tests-' + Date.now());
 mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
+  'product',
   'validation',
   'domain',
   'ai-service',
@@ -97,7 +98,8 @@ test('manual parsing separates product and name, validates dates and batch ident
     text: '서울우유 1L 2개\n계란 10개',
   });
   assert.equal(rows[0].name, '우유');
-  assert.equal(rows[0].productName, '서울우유 1L');
+  assert.equal(rows[0].productName, '서울우유 1L 2개');
+  rows.forEach((row) => (row.meaning.confirmed = true));
   let s = d.seed();
   s = d.purchase(s, rows, 'batch', '직접 입력');
   assert.throws(() => d.purchase(s, rows, 'batch', '직접 입력'));
@@ -429,4 +431,50 @@ test('HTTP API protects session cookies and rejects cross-origin or malformed wr
 test('calendar dates agree at Korean midnight regardless of server timezone', () => {
   assert.equal(d.calendarDate('2026-09-08T15:00:00Z'), '2026-09-09');
   assert.equal(d.calendarDate('2026-09-08T14:59:59Z'), '2026-09-08');
+});
+
+test('product semantics preserve packaging, composite meals and explicit review', async () => {
+  const rows = await ai.analyze({
+    source: '직접 입력',
+    text: '하림 닭가슴살 블랙페퍼 100g 5팩\n닭가슴살 샐러드 1팩',
+  });
+  assert.equal(rows[0].name, '닭가슴살');
+  assert.equal(rows[0].meaning.brand, '하림');
+  assert.equal(rows[0].meaning.totalWeight, 500);
+  assert.equal(rows[0].meaning.processed, true);
+  assert.equal(rows[1].name, '닭가슴살 샐러드');
+  assert.equal(rows[1].category, '완제품');
+  assert.equal(rows[1].meaning.weightPerUnit, null);
+  assert.throws(
+    () => d.purchase(d.seed(), rows, 'unreviewed', '직접 입력'),
+    /확인/,
+  );
+  rows.forEach((r) => (r.meaning.confirmed = true));
+  const state = d.purchase(d.seed(), rows, 'reviewed', '직접 입력');
+  assert.equal(state.items.at(-2).meaning.totalWeight, 500);
+  const after = d.apply(state, {
+    id: d.id(),
+    itemId: state.items.at(-2).id,
+    action: 'consume',
+    quantity: 1,
+  });
+  const { assertState } = await import(
+    pathToFileURL(path.join(out, 'validation.mjs'))
+  );
+  assertState(after);
+  assert.equal(after.items.at(-2).quantity, 4);
+  assert.equal(after.items.at(-2).meaning.totalWeight, 500); // original purchase total, not remaining weight
+  const invalid = structuredClone(rows);
+  invalid[0].meaning.totalWeight = 100;
+  assert.throws(
+    () => d.purchase(d.seed(), invalid, 'invalid', '직접 입력'),
+    /중량/,
+  );
+});
+test('expired inventory takes precedence even with usable inventory', () => {
+  const state = d.seed();
+  const milk = state.items.find((i) => i.name === '우유');
+  milk.expectedAt = d.addDays(d.today(), -1);
+  assert.match(buildMockBriefing(state).title, /우유.*상태 확인/);
+  assert.equal(buildMockBriefing(state).menu, '');
 });

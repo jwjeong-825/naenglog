@@ -29,3 +29,7 @@ snapshot 안에서 User/InventoryItem/Purchase/AIAnalysis/InventoryTransaction�
 
 ## 이미지와 AI
 이미지는 선택/미리보기만 하며 외부 전송·영구 저장하지 않는다. 현재 이미지 분석은 고정 샘플이다. 실제 Provider 연결은 사용자 승인 후 서버를 통해서만 수행한다. Provider가 날짜/수량을 직접 저장하지 않으며 최종 수정은 서버 도메인 로직이 담당한다.
+
+## 상품 해석 경계
+Draft.meaning optional v1로 기존 snapshot/DB migration 없이 호환한다. src/product.ts가 Mock 의미 해석을 수행하고 app/product-review.tsx가 수정/확인을 제공한다. 서버 등록에서 미확인 의미/잘못된 총량을 거절한다. 구매 총량은 재고 소비 이후에도 원본 의미로 보존된다.
+

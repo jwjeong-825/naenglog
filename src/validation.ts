@@ -34,6 +34,41 @@ export function assertDraft(value: unknown): asserts value is Draft {
     throw new Error(
       '식재료 정보가 올바르지 않아요. 이름, 수량, 단위와 날짜를 확인해주세요.',
     );
+  if (value.meaning !== undefined) {
+    const m = value.meaning;
+    if (
+      !isRecord(m) ||
+      m.version !== 1 ||
+      m.normalizedFoodName !== value.name ||
+      !(m.brand === null || text(m.brand, 60)) ||
+      !(m.packaging === null || text(m.packaging, 40)) ||
+      !Array.isArray(m.storageCandidates) ||
+      !m.storageCandidates.length ||
+      m.storageCandidates.length > 3 ||
+      !m.storageCandidates.every(storage) ||
+      ![true, false, null].includes(m.processed as boolean | null) ||
+      ![true, false, null].includes(m.openingSensitive as boolean | null) ||
+      !['high', 'low'].includes(String(m.confidence)) ||
+      typeof m.confirmed !== 'boolean' ||
+      !Array.isArray(m.reasons) ||
+      !m.reasons.length ||
+      m.reasons.length > 5 ||
+      !m.reasons.every((r) => text(r, 300))
+    )
+      throw new Error('상품 의미 해석 결과를 확인해주세요.');
+    if (m.weightPerUnit === null) {
+      if (m.weightUnit !== null || m.totalWeight !== null)
+        throw new Error('중량 정보가 일치하지 않아요.');
+    } else if (
+      !isQuantity(m.weightPerUnit) ||
+      m.weightPerUnit <= 0 ||
+      !['g', 'kg', 'ml', 'L'].includes(String(m.weightUnit)) ||
+      typeof m.totalWeight !== 'number' ||
+      !Number.isFinite(m.totalWeight) ||
+      m.totalWeight <= 0
+    )
+      throw new Error('중량/용량을 확인해주세요.');
+  }
 }
 export function assertCommand(value: unknown): asserts value is Command {
   if (

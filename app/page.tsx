@@ -1,4 +1,5 @@
 'use client';
+import { ProductReview } from './product-review';
 /* Local blob previews must remain unoptimized; they never leave the browser. */
 /* eslint-disable next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
@@ -113,7 +114,7 @@ export default function Home() {
     [text, setText] = useState(''),
     [preview, setPreview] = useState(''),
     [fileName, setFileName] = useState(''),
-    [rows, setRows] = useState<Draft[]>([]),
+    [rows, setRowsRaw] = useState<Draft[]>([]),
     [batch, setBatch] = useState(''),
     [commandText, setCommandText] = useState(''),
     [pending, setPending] = useState<Command | null>(null),
@@ -224,6 +225,33 @@ export default function Home() {
       setError((error as Error).message);
     }
   };
+  const setRows = (next: Draft[]) =>
+    setRowsRaw(
+      next.map((row) => {
+        if (!row.meaning) return row;
+        const old = rows.find((r) => r.productName === row.productName);
+        const changed =
+          old &&
+          (old.name !== row.name ||
+            old.quantity !== row.quantity ||
+            old.unit !== row.unit ||
+            old.storage !== row.storage ||
+            old.purchasedAt !== row.purchasedAt);
+        return {
+          ...row,
+          meaning: {
+            ...row.meaning,
+            normalizedFoodName: row.name,
+            totalWeight:
+              row.meaning.weightPerUnit === null
+                ? null
+                : Math.round(row.meaning.weightPerUnit * row.quantity * 1000) /
+                  1000,
+            confirmed: changed ? false : row.meaning.confirmed,
+          },
+        };
+      }),
+    );
   const list = state ? ranked(state) : [],
     item = state?.items.find((i) => i.id === selected),
     urgent = list.filter((i) => i.days >= 0 && i.days <= 2),
@@ -386,11 +414,20 @@ export default function Home() {
                   <p>{brief?.message}</p>
                   <button
                     className="light-button"
-                    onClick={() => go('assistant')}
+                    onClick={() =>
+                      list.length
+                        ? choose((expired[0] ?? list[0]).id)
+                        : go('add')
+                    }
                   >
-                    도우미와 정리하기 <ArrowUpRight size={17} />
+                    {list.length
+                      ? `${(expired[0] ?? list[0]).name} 상태 확인하고 기록하기`
+                      : '첫 구매내역 추가하기'}{' '}
+                    <ArrowUpRight size={17} />
                   </button>
-                  <div className="brief-footer">작은 실천으로, 남김없이.</div>
+                  <div className="brief-footer">
+                    판단 이유 확인 → 재료 상태 확인 → 소비·보관 기록
+                  </div>
                 </section>
                 <div className="stats">
                   <div>
@@ -417,7 +454,7 @@ export default function Home() {
                 </div>
                 <section>
                   <div className="section-heading">
-                    <h2>먼저 꺼내볼까요?</h2>
+                    <h2>오늘 확인할 순서</h2>
                     <button onClick={() => go('fridge')}>
                       전체 보기 <ChevronRight size={15} />
                     </button>
@@ -449,7 +486,7 @@ export default function Home() {
                   >
                     <Snowflake size={24} />
                     <span>
-                      <strong>오늘 먹지 않는다면 냉동으로</strong>
+                      <strong>오늘 쓰지 않는다면 보관 표시 확인</strong>
                       <small>닭가슴살 보관 방법을 확인해보세요</small>
                     </span>
                     <ChevronRight size={18} />
@@ -554,6 +591,19 @@ export default function Home() {
                       <dd>{item.expectedAt}</dd>
                     </div>
                   </dl>
+                  {item.meaning && (
+                    <p className="footnote">
+                      상품 해석 기록 · {item.meaning.brand ?? '브랜드 미확인'} ·{' '}
+                      {item.meaning.packaging ?? '포장 미확인'}
+                      <br />
+                      구매 당시 총량:{' '}
+                      {item.meaning.totalWeight === null
+                        ? '미확인'
+                        : String(item.meaning.totalWeight) +
+                          item.meaning.weightUnit}{' '}
+                      · 현재 남은 중량이 아닙니다.
+                    </p>
+                  )}
                   <p className="footnote">
                     모의 정책으로 계산한 시점이며 식품 안전을 보장하지 않아요.
                     개봉 여부, 제품 표시와 실제 상태를 확인해주세요.
@@ -759,7 +809,8 @@ export default function Home() {
                       <span>{rows.length}가지</span>
                     </div>
                     <p className="footnote">
-                      수량과 보관 방법을 확인해주세요. 같은 재료는 별도 구매
+                      원본 상품 → 의미 해석 → 관리 단위 확인 → 등록. 수정한 뒤
+                      각 상품의 확인 완료를 선택해주세요. 같은 재료는 별도 구매
                       건으로 추가됩니다.
                     </p>
                     {rows.map((d, n) => (
@@ -774,8 +825,14 @@ export default function Home() {
                             제외
                           </button>
                         </div>
+                        <ProductReview
+                          draft={d}
+                          onChange={(next) =>
+                            setRows(rows.map((r, j) => (j === n ? next : r)))
+                          }
+                        />
                         <label>
-                          식재료명
+                          관리할 식재료명
                           <input
                             value={d.name}
                             onChange={(e) =>
@@ -872,7 +929,10 @@ export default function Home() {
                     ))}
                     <button
                       className="primary wide"
-                      disabled={saving}
+                      disabled={
+                        saving ||
+                        rows.some((r) => r.meaning && !r.meaning.confirmed)
+                      }
                       onClick={async () => {
                         try {
                           if (

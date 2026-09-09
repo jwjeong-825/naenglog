@@ -1,34 +1,23 @@
-import { foods, id, ranked, today, type State } from './domain';
+import { interpretProduct } from './product';
+import { id, ranked, type State } from './domain';
 import { createAIService, type AIProvider } from './ai-service';
 // TODO: replace only this provider after explicit authorization. See AI_PROVIDER_SETUP.md.
 export const mockProvider: AIProvider = {
   mode: 'mock',
-  async analyze({ source, text }) {
+  async analyze({ source, text, recognition }) {
     await new Promise((r) => setTimeout(r, 650));
     const lines =
       source === '직접 입력'
-        ? (text ?? '').split(/\n/).filter((l) => l.trim())
-        : ['닭가슴살 2개', '버섯 1팩', '계란 10개', '우유 1개'];
+        ? (text ?? recognition?.text ?? '').split(/\n/).filter((l) => l.trim())
+        : [
+            '하림 닭가슴살 블랙페퍼 100g 5팩',
+            '닭가슴살 샐러드 1팩',
+            '계란 10개',
+            '서울우유 우유 200ml 2팩',
+          ];
     if (!lines.length)
       throw new Error('식재료를 한 줄에 하나씩 입력해주세요. 예: 계란 10개');
-    return lines.map((line) => {
-      const m = line.trim().match(/^(.+?)\s+(\d+(?:\.\d+)?)\s*([^\d\s]+)$/);
-      if (!m)
-        throw new Error(
-          `“${line.slice(0, 30)}”의 수량과 단위를 확인해주세요. 예: 우유 2개`,
-        );
-      const name =
-        Object.keys(foods).find((n) => m[1].includes(n)) ?? m[1].trim();
-      return {
-        name,
-        productName: m[1].trim(),
-        quantity: Number(m[2]),
-        unit: m[3],
-        category: foods[name]?.category ?? '미분류',
-        storage: foods[name]?.storage ?? '냉장',
-        purchasedAt: today(),
-      };
-    });
+    return lines.map(interpretProduct);
   },
   async interpret(text, state) {
     const value = text.trim();
@@ -97,6 +86,13 @@ export function buildMockBriefing(state: State) {
   const items = ranked(state);
   const safe = items.filter((i) => i.days >= 0);
   const first = safe[0];
+  const expired = items.find((i) => i.days < 0);
+  if (expired)
+    return {
+      title: `먼저 ${expired.name} 상태 확인`,
+      message: `${expired.reason}. 예상 시점이 지난 재료는 섭취 제안에서 제외했어요. 제품 표시와 실제 상태를 확인하고 처리 결과를 기록해주세요.`,
+      menu: '',
+    };
   if (!first)
     return {
       title: items.length ? '사용 전에 상태를 확인하세요' : '가벼워진 냉장고',

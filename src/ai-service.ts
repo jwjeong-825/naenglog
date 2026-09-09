@@ -3,7 +3,11 @@ import { assertCommand, assertDraft, isRecord } from './validation';
 export type ProviderMode = 'mock' | 'fallback' | 'remote';
 export type Briefing = { title: string; message: string; menu: string };
 export type Interpretation = Command | { message: string };
-export type AnalyzeInput = { source: string; text?: string };
+export type AnalyzeInput = {
+  source: string;
+  text?: string;
+  recognition?: { text: string; purchasedAt?: string; assetId?: string };
+};
 export type RequestOptions = { signal: AbortSignal };
 /** Provider implementations return untrusted data. No remote implementation is enabled. */
 export interface AIProvider {
@@ -107,7 +111,11 @@ export function createAIService(provider: AIProvider, timeoutMs = 5000) {
             if (!Array.isArray(raw) || raw.length < 1 || raw.length > 50)
               throw invalid();
             raw.forEach(assertDraft);
-            return structuredClone(raw);
+            return structuredClone(raw).map((d) =>
+              d.meaning
+                ? { ...d, meaning: { ...d.meaning, confirmed: false } }
+                : d,
+            );
           } catch {
             throw invalid();
           }

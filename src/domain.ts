@@ -1,6 +1,8 @@
 import { assertDraft, assertCommand, isQuantity } from './validation';
+import type { ProductMeaning } from './product';
 export type Storage = '냉장' | '냉동' | '실온';
 export type Draft = {
+  meaning?: ProductMeaning;
   name: string;
   productName: string;
   quantity: number;
@@ -140,6 +142,19 @@ export function purchase(
     name: typeof d.name === 'string' ? d.name.trim() : d.name,
   }));
   rows.forEach(validateDraft);
+  if (
+    rows.some(
+      (d) =>
+        d.meaning?.weightPerUnit != null &&
+        d.meaning.totalWeight !==
+          Math.round(d.meaning.weightPerUnit * d.quantity * 1000) / 1000,
+    )
+  )
+    throw new Error('포장 수량과 총 중량을 확인해주세요.');
+  if (rows.some((d) => d.meaning && !d.meaning.confirmed))
+    throw new Error(
+      '상품 해석과 보관 조건을 확인한 뒤 확인 완료를 선택해주세요.',
+    );
   const at = new Date().toISOString();
   const items = rows.map((d) => ({
     ...d,
