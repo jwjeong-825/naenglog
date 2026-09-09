@@ -54,3 +54,7 @@ HttpOnly 익명 세션 쿠키로 냉장고를 구분하고 DB에는 세션 해�
 ![모바일 홈 검증 화면](docs/screenshots/mobile-home.png)
 
 제품 정의: PROJECT.md / PRODUCT_SPEC.md. 구조: ARCHITECTURE.md. AI 계약: AI_PROVIDER_SETUP.md. 재개 지점: RESUME_STATE.md / TASK_QUEUE.md.
+
+## 공식 소스 저장소
+https://github.com/jwjeong-825/naenglog · main 브랜치. GitHub는 공식 코드/문서 기록, Sites는 별도 배포 환경이다.
+
