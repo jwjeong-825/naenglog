@@ -32,4 +32,3 @@ snapshot 안에서 User/InventoryItem/Purchase/AIAnalysis/InventoryTransaction�
 
 ## 상품 해석 경계
 Draft.meaning optional v1로 기존 snapshot/DB migration 없이 호환한다. src/product.ts가 Mock 의미 해석을 수행하고 app/product-review.tsx가 수정/확인을 제공한다. 서버 등록에서 미확인 의미/잘못된 총량을 거절한다. 구매 총량은 재고 소비 이후에도 원본 의미로 보존된다.
-
