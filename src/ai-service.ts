@@ -11,7 +11,23 @@ export type AnalyzeInput = {
   text?: string;
   recognition?: { text: string; purchasedAt?: string; assetId?: string };
 };
-export type RequestOptions = { signal: AbortSignal };
+export type RequestOptions = {
+  signal: AbortSignal;
+  limits?: {
+    maxInputTokens: number;
+    maxOutputTokens: number;
+    maxImages: number;
+    maxImageBytes: number;
+    maxRetries: number;
+    maxCalls: number;
+  };
+  /** Server adapter only: total billable tokens including vision/reasoning. */
+  reportUsage?: (usage: {
+    model: string;
+    inputTokens: number;
+    outputTokens: number;
+  }) => void;
+};
 /** Provider implementations return untrusted data. No remote implementation is enabled. */
 export interface AIProvider {
   readonly mode: ProviderMode;
@@ -26,6 +42,7 @@ export interface AIProvider {
 export class AIServiceError extends Error {
   constructor(
     public readonly code:
+      | 'trial_limit'
       | 'invalid_response'
       | 'timeout'
       | 'cancelled'

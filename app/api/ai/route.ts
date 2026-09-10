@@ -7,5 +7,6 @@ export async function POST(request: Request) {
   return createAIHandler(
     new InventoryRepository(bindings.DB),
     bindings,
+    bindings.DB,
   )(request);
 }

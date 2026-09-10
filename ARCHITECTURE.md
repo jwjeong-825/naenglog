@@ -38,3 +38,7 @@ Draft.meaning optional v1로 기존 snapshot/DB migration 없이 호환한다. s
 src/ai-client.ts → app/api/ai/route.ts → src/server/ai-handlers.ts → src/server/ai-provider.ts → AIProvider. 현재 Mock도 이 경로로 실행된다. 분석은 src/analysis.ts 및 schemas/analysis-result.schema.json의 envelope를 사용한다. 이미지 공통 제한은 src/image-input.ts. HTTP 입력은 크기 제한 스트림을 읽고 서버 세션의 D1 상태로 interpret/briefing을 실행한다.
 
 실제 어댑터는 서버 composition root에만 추가한다. 환경변수는 Cloudflare 서버 env에서 읽고 브라우저 번들로 전달하지 않는다. remote는 미구현 상태에서 503으로 닫히며 재고 조회 자체는 AI 설정 오류와 분리한다.
+
+## 제한 체험 예산 경계
+
+/api/ai → AIBudget.run 예약(CAS) → createAIService 검증/timeout → 정산 → 검증된 결과 캐시. db/schema.ts의 ai_budget(snapshot/revision) 단일 장부에서 전역 비용·세션 횟수·진행중 요청을 함께 원자적으로 변경한다. ai_cache는 세션/입력/모델/가격 정책의 SHA-256 키로 분리한다. migration0001 추가. 입력 이미지는 저장하지 않는다. 불명확한 과금은 예약을 유지하고 유료 호출을 중단한다. /api/inventory는 예산 경로를 사용하지 않는다. 보호된 내부 상태는 /api/internal/ai-budget. 상세 비용 단위와 제약은 AI_PROVIDER_SETUP.md 참조.

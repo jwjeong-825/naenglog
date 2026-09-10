@@ -7,6 +7,9 @@ import {
   providerTimeout,
   type AIEnvironment,
 } from './ai-provider';
+import { AIBudget, BudgetError, type Feature } from './ai-budget';
+import type { AIProvider, RequestOptions } from '../ai-service';
+import type { Database } from './repository';
 import type { InventoryRepository } from './repository';
 const reply = (body: unknown, status = 200) =>
   Response.json(body, {
@@ -16,6 +19,7 @@ const reply = (body: unknown, status = 200) =>
 export function createAIHandler(
   repository: InventoryRepository,
   env: AIEnvironment,
+  db: Database,
 ) {
   return async (request: Request) => {
     if (request.headers.get('Origin') !== new URL(request.url).origin)
@@ -64,7 +68,69 @@ export function createAIHandler(
       const snapshot = await repository.find(await sessionHash(token));
       if (!snapshot) return reply({ error: '냉장고를 다시 열어주세요.' }, 401);
       const provider = selectProvider(env);
-      const service = createAIService(provider, providerTimeout(env));
+      const budget = new AIBudget(db, env);
+      const session = await sessionHash(token);
+      const invoke = <T>(
+        feature: Feature,
+        image: boolean,
+        input: unknown,
+        work: (service: ReturnType<typeof createAIService>) => Promise<T>,
+      ) =>
+        budget.run(
+          session,
+          feature,
+          provider.mode === 'remote',
+          image,
+          input,
+          async (extra) => {
+            const options = (o: RequestOptions) => ({ ...o, ...extra });
+            const guarded: AIProvider = {
+              mode: provider.mode,
+              analyze: (i, o) => provider.analyze(i, options(o)),
+              interpret: (t, s, o) => provider.interpret(t, s, options(o)),
+              briefing: (s, o) => provider.briefing(s, options(o)),
+            };
+            return work(createAIService(guarded, providerTimeout(env)));
+          },
+        );
+      const stateKey = {
+        revision: snapshot.revision,
+        day: new Date(Date.now() + 9 * 3600000).toISOString().slice(0, 10),
+      };
+      const service = {
+        analyzeDetailed: (
+          i: import('../ai-service').AnalyzeInput,
+          signal: AbortSignal,
+        ) =>
+          invoke(
+            'analyze',
+            !!i.image,
+            i.image ? { image: i.image } : { text: i.text?.trim() },
+            (s) => s.analyzeDetailed(i, signal),
+          ),
+        interpret: (
+          text: string,
+          state: typeof snapshot.state,
+          signal: AbortSignal,
+        ) =>
+          invoke('interpret', false, { text: text.trim(), ...stateKey }, (s) =>
+            s.interpret(text, state, signal),
+          ),
+        briefing: (state: typeof snapshot.state, signal: AbortSignal) =>
+          invoke('briefing', false, stateKey, (s) => s.briefing(state, signal)),
+      };
+      if (
+        body.operation !== 'analyze' &&
+        body.operation !== 'config' &&
+        JSON.stringify(snapshot.state).length > 24000
+      )
+        return reply(
+          {
+            error:
+              '냉장고 데이터가 AI 체험 입력 범위를 초과했습니다. 기본 재고 기능은 계속 사용할 수 있습니다.',
+          },
+          413,
+        );
       if (body.operation === 'config')
         return reply({ mode: provider.mode, result: {} });
       let result: unknown;
@@ -120,12 +186,17 @@ export function createAIHandler(
       return reply(
         {
           error:
-            e instanceof AIServiceError
+            e instanceof AIServiceError || e instanceof BudgetError
               ? e.message
               : 'AI 설정 또는 응답을 확인하지 못했어요. 직접 입력하거나 다시 시도해주세요.',
-          code: e instanceof AIServiceError ? e.code : 'unavailable',
+          code:
+            e instanceof BudgetError
+              ? e.code
+              : e instanceof AIServiceError
+                ? e.code
+                : 'unavailable',
         },
-        503,
+        e instanceof BudgetError ? e.status : 503,
       );
     }
   };

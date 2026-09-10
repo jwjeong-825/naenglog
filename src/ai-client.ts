@@ -21,7 +21,8 @@ async function call(operation: string, payload: object, signal?: AbortSignal) {
   if (!isRecord(body)) throw new Error('Invalid AI response');
   if (!response.ok)
     throw new AIServiceError(
-      body.code === 'invalid_response' ||
+      body.code === 'trial_limit' ||
+        body.code === 'invalid_response' ||
         body.code === 'timeout' ||
         body.code === 'cancelled'
         ? body.code

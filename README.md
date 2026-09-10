@@ -65,3 +65,7 @@ https://github.com/jwjeong-825/naenglog · main 브랜치. GitHub는 공식 코�
 
 ## 실제 AI 연결 준비
 현재 Mock도 /api/ai 서버 경로로 실행한다. 이미지 분석 결과는 rows/unresolved/warnings 계약으로 검증하며 키는 서버 설정에서만 읽는다. .env.example은 빈 템플릿이다. 테스트27개 통과. 실제 어댑터·키·외부 AI 호출은 미구현이며 필요한 절차와 위험은 AI_PROVIDER_SETUP.md를 따른다.
+
+## 대회 제한 체험 예산
+
+서버 전역 예약 예산27,000원, 세션별 분석4/명령15/일일 브리핑5회, 검증 결과 캐시와 내부 비용 상태를 추가했다. Mock은0원 별도 집계이며 실제 API는 미연결이다. 새 환경변수와 migration0001 적용 절차는 AI_PROVIDER_SETUP.md에 있다.

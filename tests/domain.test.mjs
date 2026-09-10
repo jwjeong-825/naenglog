@@ -1,4 +1,10 @@
-import { readFileSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import {
+  readFileSync,
+  readdirSync,
+  mkdirSync,
+  writeFileSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -10,6 +16,8 @@ mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
   'analysis',
+  'server/ai-budget',
+  'server/ai-budget-admin',
   'image-input',
   'server/ai-provider',
   'server/ai-handlers',
@@ -272,7 +280,10 @@ const { createInventoryHandlers } = await import(
 );
 function makeRepository() {
   const sql = new DatabaseSync(':memory:');
-  sql.exec(readFileSync('drizzle/0000_low_mandroid.sql', 'utf8'));
+  for (const file of readdirSync('drizzle')
+    .filter((f) => f.endsWith('.sql'))
+    .sort())
+    sql.exec(readFileSync('drizzle/' + file, 'utf8'));
   const db = {
     prepare: (query) => ({
       bind: (...values) => ({
@@ -283,7 +294,7 @@ function makeRepository() {
       }),
     }),
   };
-  return { repository: new InventoryRepository(db), sql };
+  return { repository: new InventoryRepository(db), sql, db };
 }
 test('database migration and session ownership isolate visitors', async () => {
   const { repository: r, sql } = makeRepository();
@@ -525,7 +536,7 @@ test('server AI requires own session, validates image bytes, and runs without ex
       new Request('https://naenglog.test/api/inventory'),
     );
     const cookie = first.headers.get('set-cookie').split(';')[0];
-    const aiHandler = createAIHandler(r, {});
+    const aiHandler = createAIHandler(r, {}, databaseFor(sql));
     const send = (body, extra = {}) =>
       aiHandler(
         new Request('https://naenglog.test/api/ai', {
@@ -579,10 +590,14 @@ test('server AI requires own session, validates image bytes, and runs without ex
       text: '닭가슴살 냉동으로 옮겼어',
     });
     assert.equal((await move.json()).result.storage, '냉동');
-    const disabled = createAIHandler(r, {
-      AI_PROVIDER: 'remote',
-      AI_API_KEY: 'not-a-real-key',
-    });
+    const disabled = createAIHandler(
+      r,
+      {
+        AI_PROVIDER: 'remote',
+        AI_API_KEY: 'not-a-real-key',
+      },
+      databaseFor(sql),
+    );
     const unavailable = await disabled(
       new Request('https://naenglog.test/api/ai', {
         method: 'POST',
@@ -640,4 +655,230 @@ test('representative mock pipeline supports confirmed purchase, briefing, consum
     pathToFileURL(path.join(out, 'validation.mjs'))
   );
   assertState(state);
+});
+
+function databaseFor(sql) {
+  return {
+    prepare: (query) => ({
+      bind: (...v) => ({
+        first: async () => sql.prepare(query).get(...v) ?? null,
+        run: async () => ({
+          meta: { changes: sql.prepare(query).run(...v).changes },
+        }),
+      }),
+    }),
+  };
+}
+const { AIBudget } = await import(
+  pathToFileURL(path.join(out, 'server/ai-budget.mjs'))
+);
+const budgetEnv = (now) => ({
+  AI_MODEL: 'synthetic',
+  AI_PROJECT_ID: 'test-only',
+  AI_HARD_LIMIT_VERIFIED: 'true',
+  AI_PRICING_JSON: JSON.stringify({
+    model: 'synthetic',
+    currency: 'USD',
+    inputPerMillion: 1,
+    outputPerMillion: 2,
+    imagePerRequest: 0,
+    krwPerCurrency: 1000,
+    verifiedAt: new Date(now).toISOString(),
+  }),
+});
+test('budget cache, trial quota, mock isolation and admin protection', async () => {
+  const { sql, db } = makeRepository();
+  let now = Date.now();
+  const b = new AIBudget(db, {}, () => now);
+  let calls = 0;
+  const work = async () => {
+    calls++;
+    return { ok: true };
+  };
+  for (let i = 0; i < 4; i++) {
+    await b.run('one', 'analyze', false, true, i, work);
+    now += 4000;
+  }
+  await b.run('one', 'analyze', false, true, 0, work);
+  assert.equal(calls, 4);
+  await assert.rejects(
+    b.run('one', 'analyze', false, true, 5, work),
+    (e) => e.status === 429,
+  );
+  await b.run('two', 'analyze', false, true, 0, work);
+  assert.equal(calls, 5);
+  assert.equal((await b.summary(false)).estimatedKrw, 0);
+  assert.equal((await b.summary()).requests, 0);
+  const { budgetStatus } = await import(
+    pathToFileURL(path.join(out, 'server/ai-budget-admin.mjs'))
+  );
+  assert.equal(
+    (await budgetStatus(new Request('https://test'), db, {})).status,
+    404,
+  );
+  const secret = 'x'.repeat(32);
+  const response = await budgetStatus(
+    new Request('https://test', {
+      headers: { Authorization: 'Bearer ' + secret },
+    }),
+    db,
+    { AI_BUDGET_ADMIN_TOKEN: secret },
+  );
+  assert.equal(response.status, 200);
+  assert.ok(!(await response.text()).includes('session'));
+  sql.close();
+});
+test('atomic reservations cap concurrent spending and preserve uncertain charges', async () => {
+  const { sql, db } = makeRepository();
+  const now = Date.now();
+  const env = budgetEnv(now);
+  const b = new AIBudget(db, env, () => now);
+  sql
+    .prepare('INSERT INTO ai_budget VALUES (?,?,0)')
+    .run(
+      'championship-2026',
+      JSON.stringify({ total: 26990000, halted: false, entries: [] }),
+    );
+  let release;
+  const waiting = new Promise((r) => (release = r));
+  let started = 0;
+  const results = await Promise.allSettled([
+    b.run('a', 'interpret', true, false, 'a', async () => {
+      started++;
+      await waiting;
+      return {};
+    }),
+    b.run('b', 'interpret', true, false, 'b', async () => {
+      started++;
+      await waiting;
+      return {};
+    }),
+    Promise.resolve().then(async () => {
+      await new Promise((r) => setTimeout(r, 30));
+      release();
+    }),
+  ]);
+  assert.equal(started, 1);
+  assert.equal(results.filter((r) => r.status === 'rejected').length, 1);
+  // Each reservation is 8.4 KRW; only 1.6 KRW remains.
+  await assert.rejects(
+    b.run('c', 'interpret', true, false, 'c', async () => ({})),
+    (e) => e.status === 429,
+  );
+  assert.equal((await b.summary()).estimatedKrw, 26998.4);
+  sql.close();
+});
+test('usage settlement, duplicate pending, invalid response and pricing fail closed', async () => {
+  const { sql, db } = makeRepository();
+  let now = Date.now();
+  const env = budgetEnv(now);
+  const b = new AIBudget(db, env, () => now);
+  await assert.rejects(
+    new AIBudget(db, {}).run('a', 'analyze', true, true, 1, async () => ({})),
+    (e) => e.status === 503,
+  );
+  let release;
+  const wait = new Promise((r) => (release = r));
+  const first = b.run('a', 'interpret', true, false, 'same', async (o) => {
+    assert.equal(o.limits.maxRetries, 0);
+    await wait;
+    o.reportUsage({ model: 'synthetic', inputTokens: 100, outputTokens: 50 });
+    return { ok: true };
+  });
+  await new Promise((r) => setTimeout(r, 10));
+  await assert.rejects(
+    b.run('a', 'interpret', true, false, 'same', async () => ({})),
+    (e) => e.status === 429,
+  );
+  release();
+  await first;
+  assert.equal((await b.summary()).estimatedKrw, 0.24);
+  now += 4000;
+  await assert.rejects(
+    b.run('a', 'interpret', true, false, 'bad-json', async (o) => {
+      o.reportUsage({ model: 'synthetic', inputTokens: 1, outputTokens: 1 });
+      throw new Error('invalid JSON');
+    }),
+  );
+  assert.equal((await b.summary()).estimatedKrw, 8.64);
+  now += 8000;
+  await b.run('b', 'interpret', true, false, 'over', async (o) => {
+    o.reportUsage({ model: 'synthetic', inputTokens: 6001, outputTokens: 1 });
+    return {};
+  });
+  assert.equal((await b.summary()).level, 'blocked');
+  sql.close();
+});
+test('briefing resets at Korean midnight but lifetime analysis quota does not', async () => {
+  const { sql, db } = makeRepository();
+  let now = Date.parse('2026-09-09T14:00:00Z');
+  const b = new AIBudget(db, {}, () => now);
+  for (let i = 0; i < 5; i++)
+    await b.run('a', 'briefing', false, false, i, async () => ({}));
+  await assert.rejects(
+    b.run('a', 'briefing', false, false, 6, async () => ({})),
+    (e) => e.status === 429,
+  );
+  now = Date.parse('2026-09-09T15:00:00Z');
+  await b.run('a', 'briefing', false, false, 7, async () => ({}));
+  sql.close();
+});
+
+test('expired reservations remain charged after restart and inventory remains writable', async () => {
+  const { repository: r, sql, db } = makeRepository();
+  let now = Date.now();
+  const b = new AIBudget(db, budgetEnv(now), () => now);
+  const pending = {
+    id: 'old',
+    key: 'old',
+    session: 'old',
+    feature: 'interpret',
+    model: 'synthetic',
+    image: false,
+    at: now - 130000,
+    day: 'old',
+    reserved: 8400,
+    cost: 8400,
+    cumulative: 8400,
+    status: 'pending',
+    usage: null,
+    pricing: null,
+  };
+  sql
+    .prepare('INSERT INTO ai_budget VALUES (?,?,0)')
+    .run(
+      'championship-2026',
+      JSON.stringify({ total: 8400, halted: false, entries: [pending] }),
+    );
+  await b.run('new', 'interpret', true, false, 'new', async (o) => {
+    o.reportUsage({ model: 'synthetic', inputTokens: 100, outputTokens: 50 });
+    return {};
+  });
+  const status = await b.summary();
+  assert.equal(status.estimatedKrw, 8.64);
+  assert.equal(status.recent[0].status, 'uncertain');
+  const initial = await r.create('new');
+  const egg = initial.state.items.find((i) => i.name === '계란');
+  sql
+    .prepare('UPDATE ai_budget SET snapshot=? WHERE id=?')
+    .run(
+      JSON.stringify({ total: 27000000, halted: true, entries: [] }),
+      'championship-2026',
+    );
+  await assert.rejects(
+    b.run('new', 'interpret', true, false, 'blocked', async () => ({})),
+    (e) => e.status === 429,
+  );
+  const changed = await r.change('new', {
+    kind: 'command',
+    revision: initial.revision,
+    command: { id: d.id(), itemId: egg.id, action: 'consume', quantity: 3 },
+  });
+  assert.equal(changed.state.items.find((i) => i.id === egg.id).quantity, 7);
+  now += 8 * 86400000;
+  await assert.rejects(
+    b.run('other', 'interpret', true, false, 1, async () => ({})),
+    (e) => e.status === 503,
+  );
+  sql.close();
 });

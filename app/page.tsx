@@ -163,10 +163,19 @@ export default function Home() {
           setProviderMode(ai.mode);
         }
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         if (!controller.signal.aborted) {
+          const limited =
+            error instanceof Error &&
+            'code' in error &&
+            error.code === 'trial_limit';
           setBrief(buildMockBriefing(state));
-          setBriefSource('분석 지연 · 기본 규칙 안내');
+          setBriefSource(
+            limited
+              ? '체험 AI 한도 · 기본 규칙 안내'
+              : '분석 지연 · 기본 규칙 안내',
+          );
+          if (limited) setError(error.message);
         }
       });
     return () => controller.abort();

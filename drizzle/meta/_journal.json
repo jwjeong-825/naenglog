@@ -8,6 +8,13 @@
       "when": 1788885671936,
       "tag": "0000_low_mandroid",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789014451626,
+      "tag": "0001_short_angel",
+      "breakpoints": true
     }
   ]
 }

@@ -105,3 +105,7 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 ## 최종 검증 결과
 테스트27/27, typecheck/lint, 최종 build exit0(82141). /api/ai와 /api/inventory 빌드 포함. 클라이언트 번들 키 설정/서버 미구현 코드 검색 일치 없음. 실제 이미지 fixture 서버 분석4개와 부분 인식 UI 확인 완료. 이 변경을 GitHub main에 커밋/push하며 운영 Sites는 변경하지 않았다. 최신 커밋은 git log -1로 확인한다.
+
+## 2026-09-10 제한 체험 예산 · 구현 및 검증 완료
+
+서버 AIBudget에 글로벌 비용 예약/CAS, 사용자 횟수, 캐시, 사용량 정산, 보호된 관리자 상태를 구현했다. paid27,000원 차단, Mock 장부 분리. 실제 API 없음. migration0001 로컬 적용 완료. 테스트32개/typecheck/lint/build 통과. 클라이언트 번들에 서버 secret 설정명 노출0건, Git 대상 민감정보 패턴0건, diff 검사 통과. 다음: 이 변경을 feat: enforce championship AI trial budget and usage limits로 commit/push 후 main 일치 확인. 이후 TASK_QUEUE의 이미지 정규화부터 재개. 운영에는 새 migration/배포를 적용하지 않았다.

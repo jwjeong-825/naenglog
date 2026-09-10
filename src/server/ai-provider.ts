@@ -1,6 +1,7 @@
 import { mockProvider } from '../ai';
 import type { AIProvider } from '../ai-service';
-export type AIEnvironment = {
+import type { BudgetEnvironment } from './ai-budget';
+export type AIEnvironment = BudgetEnvironment & {
   AI_PROVIDER?: string;
   AI_MODEL?: string;
   AI_API_KEY?: string;
