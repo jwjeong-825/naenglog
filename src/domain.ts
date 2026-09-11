@@ -3,6 +3,7 @@ import type { ProductMeaning } from './product';
 export type Storage = '냉장' | '냉동' | '실온';
 export type Draft = {
   meaning?: ProductMeaning;
+  expiryDate?: string;
   name: string;
   productName: string;
   quantity: number;
@@ -98,6 +99,7 @@ export const foods: Record<
   },
 };
 export function expected(d: Draft) {
+  if (d.expiryDate) return d.expiryDate;
   return addDays(
     d.purchasedAt,
     (foods[d.name]?.days ?? [3, 14, 1])[

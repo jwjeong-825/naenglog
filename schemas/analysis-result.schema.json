@@ -194,8 +194,15 @@
               },
               "confirmed": {
                 "type": "boolean"
+              },
+              "resolution": {
+                "$ref": "#/$defs/resolution"
               }
             }
+          },
+          "expiryDate": {
+            "type": "string",
+            "format": "date"
           }
         }
       }
@@ -220,6 +227,9 @@
             "type": "string",
             "minLength": 1,
             "maxLength": 300
+          },
+          "resolution": {
+            "$ref": "#/$defs/resolution"
           }
         }
       }
@@ -231,6 +241,89 @@
         "type": "string",
         "minLength": 1,
         "maxLength": 300
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "productName",
+          "reason",
+          "resolution"
+        ],
+        "properties": {
+          "productName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "resolution": {
+            "$ref": "#/$defs/resolution"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "resolution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "classification",
+        "score",
+        "method",
+        "evidence",
+        "candidates"
+      ],
+      "properties": {
+        "classification": {
+          "enum": [
+            "FOOD",
+            "NON_FOOD",
+            "UNCERTAIN"
+          ]
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "method": {
+          "enum": [
+            "local_rule",
+            "mock_catalog",
+            "direct_ai",
+            "ai_search",
+            "user_confirmed"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 5,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          }
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 60
+          }
+        }
       }
     }
   }

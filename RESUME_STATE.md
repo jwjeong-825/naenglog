@@ -109,3 +109,7 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 ## 2026-09-10 제한 체험 예산 · 구현 및 검증 완료
 
 서버 AIBudget에 글로벌 비용 예약/CAS, 사용자 횟수, 캐시, 사용량 정산, 보호된 관리자 상태를 구현했다. paid27,000원 차단, Mock 장부 분리. 실제 API 없음. migration0001 로컬 적용 완료. 테스트32개/typecheck/lint/build 통과. 클라이언트 번들에 서버 secret 설정명 노출0건, Git 대상 민감정보 패턴0건, diff 검사 통과. 다음: 이 변경을 feat: enforce championship AI trial budget and usage limits로 commit/push 후 main 일치 확인. 이후 TASK_QUEUE의 이미지 정규화부터 재개. 운영에는 새 migration/배포를 적용하지 않았다.
+
+## 2026-09-12 · TOP20 제출 흐름 개선
+
+촬영/업로드 공통 ReceiptInput, FOOD/NON_FOOD/UNCERTAIN 분류, 최대3개 Mock 후보 탐색, 확인/제외/복원 UI, 소비기한 입력을 구현했다. 실제 OCR/Vision/검색/key 없음. 테스트37개·타입/lint·최종 build 통과. 브랜드 보존·반응형 최소폭까지 반영했다. 민감정보 패턴 검사0건, 클라이언트 서버 secret 설정명 노출0건, diff 검사 통과. 내장 브라우저 연결 복구 완료: 촬영 capture=environment/업로드 capture 없음, 비식품 제외→서울1000 후보 선택→확인 전 저장 차단→두 재료 등록→홈 복귀 확인. 762px 화면 가로 넘침 없음. 실기기 카메라/갤러리 선택은 미검증. 공식main에 이번 기능을 commit/push한 뒤 TASK_QUEUE의 실기기·이미지 정규화부터 재개한다. 운영 Sites 버전2 미변경.

@@ -1,4 +1,5 @@
 'use client';
+import { CONFIDENCE_THRESHOLDS } from '../src/receipt-resolution';
 import type { Draft } from '../src/domain';
 import type { ProductMeaning } from '../src/product';
 export function ProductReview({
@@ -20,7 +21,18 @@ export function ProductReview({
       <p>
         <strong>원본 상품명</strong>
         <br />
-        {draft.productName}
+        <input
+          aria-label="원본 상품명"
+          maxLength={120}
+          value={draft.productName}
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              productName: e.target.value,
+              meaning: { ...m, confirmed: false },
+            })
+          }
+        />
       </p>
       <p>
         → {draft.name} · {draft.quantity}
@@ -31,6 +43,38 @@ export function ProductReview({
           {r}
         </p>
       ))}
+      {m.resolution && (
+        <p className="footnote">
+          분류: 식품 · 신뢰 점수 {m.resolution.score.toFixed(2)} ·{' '}
+          {m.resolution.score < CONFIDENCE_THRESHOLDS.review
+            ? '추가 확인 필요'
+            : m.resolution.score < CONFIDENCE_THRESHOLDS.high
+              ? '수정 가능'
+              : '확인 후 일괄 등록'}{' '}
+          {['local_rule', 'mock_catalog'].includes(m.resolution.method)
+            ? '(규칙 기반 예시, 실제 AI 확률 아님)'
+            : ''}
+        </p>
+      )}
+      <label>
+        제품 표시 소비기한 (선택)
+        <input
+          type="date"
+          min={draft.purchasedAt}
+          value={draft.expiryDate ?? ''}
+          onChange={(e) =>
+            onChange({
+              ...draft,
+              expiryDate: e.target.value || undefined,
+              meaning: { ...m, confirmed: false },
+            })
+          }
+        />
+      </label>
+      <p className="footnote">
+        제품 표시가 없으면 보관별 기본 예상기간으로 안내해요. 실제 소비기한으로
+        확정하지 않아요.
+      </p>
       <div className="two-cols">
         <label>
           카테고리

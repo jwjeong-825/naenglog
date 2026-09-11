@@ -1,4 +1,10 @@
 'use client';
+import { ReceiptInput } from './receipt-input';
+import { ReceiptReview } from './receipt-review';
+import type {
+  PendingProduct,
+  ExcludedProduct,
+} from '../src/receipt-resolution';
 import { ProductReview } from './product-review';
 /* Preview uses a local blob URL; analysis sends validated bytes to our server. */
 /* eslint-disable next/no-img-element */
@@ -14,7 +20,6 @@ import {
   Check,
   Snowflake,
   ChevronRight,
-  Upload,
   Send,
   Leaf,
 } from 'lucide-react';
@@ -112,7 +117,7 @@ export default function Home() {
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [busy, setBusy] = useState(false);
-  const [source, setSource] = useState('직접 입력'),
+  const [source, setSource] = useState('영수증'),
     [text, setText] = useState(''),
     [preview, setPreview] = useState(''),
     [fileName, setFileName] = useState(''),
@@ -125,6 +130,31 @@ export default function Home() {
     [answer, setAnswer] = useState(''),
     [amount, setAmount] = useState('1'),
     [reset, setReset] = useState(false);
+  const [unresolved, setUnresolved] = useState<PendingProduct[]>([]),
+    [excluded, setExcluded] = useState<ExcludedProduct[]>([]);
+  const selectImage = (file: File) => {
+    requestRef.current?.abort();
+    setBusy(false);
+    setRows([]);
+    setUnresolved([]);
+    setExcluded([]);
+    setNotice('');
+    setPreview('');
+    setFileName('');
+    setImageFile(null);
+    if (
+      !['image/jpeg', 'image/png', 'image/webp'].includes(file.type) ||
+      file.size > 5 * 1024 * 1024 ||
+      !file.size
+    ) {
+      setError('5MB 이하 JPG, JPEG, PNG, WEBP 이미지를 선택해주세요.');
+      return;
+    }
+    setImageFile(file);
+    setPreview(URL.createObjectURL(file));
+    setFileName(file.name);
+    setError('');
+  };
   useEffect(() => {
     let active = true;
     Promise.resolve()
@@ -259,7 +289,8 @@ export default function Home() {
             old.quantity !== row.quantity ||
             old.unit !== row.unit ||
             old.storage !== row.storage ||
-            old.purchasedAt !== row.purchasedAt);
+            old.purchasedAt !== row.purchasedAt ||
+            old.expiryDate !== row.expiryDate);
         return {
           ...row,
           meaning: {
@@ -291,6 +322,8 @@ export default function Home() {
     setError('');
     setBusy(true);
     setRows([]);
+    setUnresolved([]);
+    setExcluded([]);
     try {
       if (source !== '직접 입력' && !preview)
         throw new Error('먼저 이미지를 선택해주세요.');
@@ -304,13 +337,21 @@ export default function Home() {
       );
       if (controller.signal.aborted) return;
       setRows(result.rows);
+      setUnresolved(result.unresolved);
+      setExcluded(result.excluded ?? []);
       setNotice(
         [
           ...result.warnings,
-          ...result.unresolved.map((x) => x.productName + ': ' + x.reason),
+          ...(result.excluded?.length
+            ? [result.excluded.length + '개 비식품을 제외했어요.']
+            : []),
         ].join(' '),
       );
-      if (!result.rows.length)
+      if (
+        !result.rows.length &&
+        !result.unresolved.length &&
+        !result.excluded?.length
+      )
         setError(
           '인식한 상품이 없어요. 직접 입력에서 상품명과 수량을 적어주세요.',
         );
@@ -427,6 +468,20 @@ export default function Home() {
           <>
             {view === 'home' && (
               <>
+                <section className="receipt-entry panel">
+                  <h2>영수증 한 장으로 채우는 냉장고</h2>
+                  <p>
+                    구매 품목을 이해하고, 오늘 먼저 확인할 식품까지 안내해요.
+                  </p>
+                  <ReceiptInput
+                    disabled={busy}
+                    onSelect={(file) => {
+                      setSource('영수증');
+                      go('add');
+                      selectImage(file);
+                    }}
+                  />
+                </section>
                 <div className="heading">
                   <div>
                     <p className="eyebrow">
@@ -748,17 +803,24 @@ export default function Home() {
                     setBusy(false);
                     setSource(String(v));
                     setRows([]);
+                    setUnresolved([]);
+                    setExcluded([]);
+                    setNotice('');
                     setError('');
                   }}
                 >
                   <TabsList className="filter-tabs">
-                    {['직접 입력', '영수증', '온라인 캡처'].map((v) => (
+                    {['영수증', '온라인 캡처', '직접 입력'].map((v) => (
                       <TabsTrigger disabled={busy} key={v} value={v}>
                         {v}
                       </TabsTrigger>
                     ))}
                   </TabsList>
                 </Tabs>
+                <p className="footnote">
+                  영수증 한 장에서 식품을 골라 확인 후 냉장고에 채워요.{' '}
+                  {providerMode === 'mock' && '현재는 Mock 체험입니다.'}
+                </p>
                 <section className="panel">
                   {source === '직접 입력' ? (
                     <>
@@ -773,6 +835,8 @@ export default function Home() {
                             setBusy(false);
                             setText(e.target.value);
                             setRows([]);
+                            setUnresolved([]);
+                            setExcluded([]);
                           }}
                           placeholder={'계란 10개\n우유 2개\n버섯 1팩'}
                         />
@@ -783,41 +847,10 @@ export default function Home() {
                     </>
                   ) : (
                     <>
-                      <label className="upload-zone">
-                        <Upload size={27} />
-                        <strong>{fileName || '구매내역 이미지 선택'}</strong>
-                        <span>JPG, PNG, WEBP · 최대 5MB</span>
-                        <input
-                          disabled={busy}
-                          type="file"
-                          accept="image/jpeg,image/png,image/webp"
-                          onChange={(e) => {
-                            const file = e.target.files?.[0];
-                            if (!file) return;
-                            setRows([]);
-                            setPreview('');
-                            setFileName('');
-                            setImageFile(null);
-                            if (
-                              ![
-                                'image/jpeg',
-                                'image/png',
-                                'image/webp',
-                              ].includes(file.type) ||
-                              file.size > 5 * 1024 * 1024
-                            ) {
-                              setError(
-                                '5MB 이하 JPG, PNG, WEBP 이미지를 선택해주세요.',
-                              );
-                              return;
-                            }
-                            setImageFile(file);
-                            setPreview(URL.createObjectURL(file));
-                            setFileName(file.name);
-                            setError('');
-                          }}
-                        />
-                      </label>
+                      <ReceiptInput disabled={busy} onSelect={selectImage} />
+                      {fileName && (
+                        <p className="footnote">선택한 이미지: {fileName}</p>
+                      )}
                       {preview && (
                         <img
                           className="receipt-preview"
@@ -833,7 +866,7 @@ export default function Home() {
                       )}
                       <p className="mock-warning">
                         {providerMode === 'mock'
-                          ? '현재는 실제 인식 없이 예시 재료 4개를 보여줍니다. 사진 속 구매내역과 다를 수 있어요.'
+                          ? '현재는 실제 인식 없이 식품 4개·비식품 1개·애매한 품목 1개 예시를 보여줍니다. 사진 속 구매내역과 다를 수 있어요.'
                           : '이미지에서 상품을 분석합니다. 결과를 확인한 뒤 등록해주세요.'}{' '}
                         이미지는 분석을 위해 이 서비스 서버로 전송되며 저장하지
                         않습니다.
@@ -847,7 +880,9 @@ export default function Home() {
                   >
                     <Sparkles size={17} />
                     {busy
-                      ? '분석 중…'
+                      ? providerMode === 'mock'
+                        ? '예시 품목 분류·의미 정리 중…'
+                        : '구매 품목·보관 정보 확인 중…'
                       : source === '직접 입력'
                         ? '입력 내용 정리하기'
                         : providerMode === 'mock'
@@ -855,6 +890,47 @@ export default function Home() {
                           : '이미지 분석하기'}
                   </button>
                 </section>
+                <ol className="receipt-progress" aria-label="영수증 정리 순서">
+                  <li>1. 이미지 또는 구매내역 입력</li>
+                  <li aria-current={busy ? 'step' : undefined}>
+                    {busy
+                      ? '2. 품목 분류·상품 의미 정리 중'
+                      : '2. 품목 분류·상품 의미 정리'}
+                  </li>
+                  <li
+                    aria-current={
+                      !busy &&
+                      rows.length + unresolved.length + excluded.length > 0
+                        ? 'step'
+                        : undefined
+                    }
+                  >
+                    3. 후보·수량·보관 확인
+                  </li>
+                  <li>4. 확인한 식품 일괄 등록</li>
+                </ol>
+                <ReceiptReview
+                  pending={unresolved}
+                  excluded={excluded}
+                  onResolve={(i, draft) => {
+                    setRows([...rows, draft]);
+                    setUnresolved(unresolved.filter((_, j) => i !== j));
+                  }}
+                  onDismiss={(i) =>
+                    setUnresolved(unresolved.filter((_, j) => i !== j))
+                  }
+                  onRestore={(i) => {
+                    const item = excluded[i];
+                    setUnresolved([
+                      ...unresolved,
+                      {
+                        productName: item.productName,
+                        reason: '식품명과 수량을 직접 확인해주세요.',
+                      },
+                    ]);
+                    setExcluded(excluded.filter((_, j) => i !== j));
+                  }}
+                />
                 {rows.length > 0 && (
                   <section>
                     <div className="section-heading">
@@ -980,10 +1056,17 @@ export default function Home() {
                         </div>
                       </div>
                     ))}
+                    {unresolved.length > 0 && (
+                      <p className="footnote">
+                        확인이 필요한 품목을 수정하거나 제외하면 일괄 등록할 수
+                        있어요.
+                      </p>
+                    )}
                     <button
                       className="primary wide"
                       disabled={
                         saving ||
+                        unresolved.length > 0 ||
                         rows.some((r) => r.meaning && !r.meaning.confirmed)
                       }
                       onClick={async () => {
@@ -1002,7 +1085,10 @@ export default function Home() {
                             return;
                           setRows([]);
                           setText('');
-                          setView('fridge');
+                          setUnresolved([]);
+                          setExcluded([]);
+                          setView('home');
+                          window.scrollTo({ top: 0 });
                         } catch (e) {
                           setError((e as Error).message);
                         }

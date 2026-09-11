@@ -42,3 +42,7 @@ src/ai-client.ts → app/api/ai/route.ts → src/server/ai-handlers.ts → src/s
 ## 제한 체험 예산 경계
 
 /api/ai → AIBudget.run 예약(CAS) → createAIService 검증/timeout → 정산 → 검증된 결과 캐시. db/schema.ts의 ai_budget(snapshot/revision) 단일 장부에서 전역 비용·세션 횟수·진행중 요청을 함께 원자적으로 변경한다. ai_cache는 세션/입력/모델/가격 정책의 SHA-256 키로 분리한다. migration0001 추가. 입력 이미지는 저장하지 않는다. 불명확한 과금은 예약을 유지하고 유료 호출을 중단한다. /api/inventory는 예산 경로를 사용하지 않는다. 보호된 내부 상태는 /api/internal/ai-budget. 상세 비용 단위와 제약은 AI_PROVIDER_SETUP.md 참조.
+
+## 영수증 입력/분류 확장
+
+app/receipt-input.tsx는 두 파일 선택 UI와 하나의 파일 이벤트를 제공한다. Home의 selectImage/encodeImage/server 경계는 공통이다. src/receipt-resolution.ts는 OCR 이후 텍스트의 로컬 분류·후보 탐색을 담당하며 ProductExplorer 계약으로 분리한다. app/receipt-review.tsx는 unresolved 수정/제외/비식품 복원을 담당한다. ProductMeaning.resolution과 Draft.expiryDate는 optional이므로 D1 스키마 migration은 필요 없다. validateAnalysis/assertDraft가 신규 필드와 FOOD 상태를 검사한다. 구조화 JSON schema도 갱신했다. 분석 캐시 정책 version을2로 올렸으며 비용 장부/체험 quota는 초기화하지 않았다.

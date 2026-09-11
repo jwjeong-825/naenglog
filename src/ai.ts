@@ -1,10 +1,10 @@
-import { interpretProduct } from './product';
+import { resolveReceipt } from './receipt-resolution';
 import { id, ranked, type State } from './domain';
 import { createAIService, type AIProvider } from './ai-service';
 // TODO: replace only this provider after explicit authorization. See AI_PROVIDER_SETUP.md.
 export const mockProvider: AIProvider = {
   mode: 'mock',
-  async analyze({ source, text, recognition }) {
+  async analyze({ source, text, recognition }, options) {
     await new Promise((r) => setTimeout(r, 650));
     const lines =
       source === '직접 입력'
@@ -14,30 +14,17 @@ export const mockProvider: AIProvider = {
             '닭가슴살 샐러드 1팩',
             '계란 10개',
             '서울우유 우유 200ml 2팩',
+            '휴지 1개',
+            '서울 1000',
           ];
     if (!lines.length)
       throw new Error('식재료를 한 줄에 하나씩 입력해주세요. 예: 계란 10개');
-    const rows = [],
-      unresolved = [];
-    for (const line of lines) {
-      try {
-        rows.push(interpretProduct(line));
-      } catch {
-        unresolved.push({
-          productName: line.slice(0, 120),
-          reason: '수량/단위를 읽지 못했어요. 직접 입력에서 수정해주세요.',
-        });
-      }
-    }
-    return {
-      version: 1,
-      rows,
-      unresolved,
-      warnings:
-        source === '직접 입력'
-          ? []
-          : ['실제 이미지 인식이 아닌 고정 상품 예시입니다.'],
-    };
+    const result = await resolveReceipt(lines, options.signal);
+    result.warnings =
+      source === '직접 입력'
+        ? []
+        : ['실제 이미지 인식이 아닌 고정 상품 예시입니다.'];
+    return result;
   },
   async interpret(text, state) {
     const value = text.trim();

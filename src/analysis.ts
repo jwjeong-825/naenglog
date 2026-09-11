@@ -1,9 +1,15 @@
+import {
+  assertResolution,
+  type PendingProduct,
+  type ExcludedProduct,
+} from './receipt-resolution';
 import type { Draft } from './domain';
 import { assertDraft, isRecord } from './validation';
 export type AnalysisResult = {
   version: 1;
   rows: Draft[];
-  unresolved: { productName: string; reason: string }[];
+  unresolved: PendingProduct[];
+  excluded?: ExcludedProduct[];
   warnings: string[];
 };
 export function validateAnalysis(raw: unknown): AnalysisResult {
@@ -22,7 +28,7 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
     throw new Error('Invalid analysis envelope');
   const short = (v: unknown, max: number) =>
     typeof v === 'string' && v.trim().length > 0 && v.length <= max;
-  if (!keys(raw, ['version', 'rows', 'unresolved', 'warnings']))
+  if (!keys(raw, ['version', 'rows', 'unresolved', 'warnings', 'excluded']))
     throw new Error('Unknown analysis fields');
   if (
     !raw.warnings.every((v) => short(v, 300)) ||
@@ -31,6 +37,27 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
     )
   )
     throw new Error('Invalid analysis notices');
+  if (
+    raw.excluded !== undefined &&
+    (!Array.isArray(raw.excluded) || raw.excluded.length > 50)
+  )
+    throw new Error('Invalid excluded products');
+  for (const item of [
+    ...raw.unresolved,
+    ...((raw.excluded as unknown[]) ?? []),
+  ]) {
+    if (
+      !isRecord(item) ||
+      !short(item.productName, 120) ||
+      !short(item.reason, 300) ||
+      !keys(item, ['productName', 'reason', 'resolution'])
+    )
+      throw new Error('Invalid product notice');
+    if (item.resolution !== undefined) assertResolution(item.resolution);
+  }
+  for (const item of (raw.excluded as ExcludedProduct[]) ?? [])
+    if (!item.resolution || item.resolution.classification !== 'NON_FOOD')
+      throw new Error('Invalid exclusion');
   raw.rows.forEach((v) => {
     assertDraft(v);
     if (!v.meaning) throw new Error('Missing product meaning');
@@ -44,9 +71,11 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
         'purchasedAt',
         'storage',
         'meaning',
+        'expiryDate',
       ]) ||
       !keys(v.meaning, [
         'version',
+        'resolution',
         'normalizedFoodName',
         'brand',
         'weightPerUnit',
@@ -69,7 +98,11 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
     )
       throw new Error('Invalid total weight');
   });
-  if (!raw.rows.length && !raw.unresolved.length)
+  if (
+    !raw.rows.length &&
+    !raw.unresolved.length &&
+    !(raw.excluded as unknown[] | undefined)?.length
+  )
     throw new Error('Empty analysis');
   return {
     ...(structuredClone(raw) as AnalysisResult),

@@ -189,7 +189,7 @@ export class AIBudget {
       bounds = limits(feature),
       now = this.now();
     const ledgerId = remote ? 'championship-2026' : 'championship-2026-mock';
-    const key = await fingerprint({ session, feature, input, p, version: 1 });
+    const key = await fingerprint({ session, feature, input, p, version: 2 });
     const cached = await this.db
       .prepare(
         'SELECT payload FROM ai_cache WHERE cache_key=? AND expires_at>?',

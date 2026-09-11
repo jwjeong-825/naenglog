@@ -16,6 +16,7 @@ mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
   'analysis',
+  'receipt-resolution',
   'server/ai-budget',
   'server/ai-budget-admin',
   'image-input',
@@ -881,4 +882,126 @@ test('expired reservations remain charged after restart and inventory remains wr
     (e) => e.status === 503,
   );
   sql.close();
+});
+
+const { validateAnalysis } = await import(
+  pathToFileURL(path.join(out, 'analysis.mjs'))
+);
+const resolution = await import(
+  pathToFileURL(path.join(out, 'receipt-resolution.mjs'))
+);
+test('receipt classification preserves uncertain products and excludes non-food', async () => {
+  const result = await resolution.resolveReceipt(
+    [
+      '서울우유 나100% 1L',
+      '비비고 왕교자 1봉',
+      '대패삼겹살 600g',
+      '휴지 1개',
+      '샴푸 2개',
+      '서울 1000',
+      '참P 500',
+    ],
+    new AbortController().signal,
+  );
+  assert.equal(result.rows.length, 3);
+  assert.equal(result.rows[0].name, '우유');
+  assert.equal(result.rows[1].name, '만두');
+  assert.equal(result.rows[1].meaning.brand, '비비고');
+  assert.equal(result.rows[1].storage, '냉동');
+  assert.equal(result.rows[2].name, '돼지고기');
+  assert.equal(result.excluded.length, 2);
+  assert.equal(result.unresolved.length, 2);
+  assert.deepEqual(result.unresolved[0].resolution.candidates, [
+    '우유',
+    '두유',
+    '요구르트',
+  ]);
+  assert.ok(result.unresolved.every((i) => i.resolution.score < 0.7));
+  const v = validateAnalysis(result);
+  assert.ok(v.rows.every((r) => !r.meaning.confirmed));
+  const allExcluded = await resolution.resolveReceipt(
+    ['세제 1개'],
+    new AbortController().signal,
+  );
+  assert.equal(validateAnalysis(allExcluded).excluded.length, 1);
+});
+test('bounded exploration handles failure, unknown products and cancellation without guessing', async () => {
+  let calls = 0;
+  const explorer = {
+    resolve: async () => {
+      calls++;
+      throw new Error('private search token');
+    },
+  };
+  const result = await resolution.resolveReceipt(
+    ['냉동A', '행사상품1', '청정2호', '알수없음'],
+    new AbortController().signal,
+    explorer,
+  );
+  assert.equal(calls, 3);
+  assert.equal(result.rows.length, 0);
+  assert.equal(result.unresolved.length, 4);
+  assert.ok(!JSON.stringify(result).includes('private search token'));
+  const controller = new AbortController();
+  const work = resolution.resolveReceipt(['서울 1000'], controller.signal, {
+    resolve: () => new Promise(() => {}),
+  });
+  controller.abort();
+  await assert.rejects(work);
+  const invalid = await resolution.resolveReceipt(
+    ['서울 1000'],
+    new AbortController().signal,
+    { resolve: async () => ({ bad: true }) },
+  );
+  assert.equal(invalid.rows.length, 0);
+  assert.deepEqual(invalid.unresolved[0].resolution.candidates, []);
+});
+test('candidate correction requires final confirmation and preserves label expiry through storage changes', async () => {
+  const draft = resolution.confirmCandidate('서울 1000', '우유', 2, '팩');
+  draft.expiryDate = d.addDays(d.today(), 2);
+  assert.throws(() => d.purchase(d.seed(), [draft], d.id(), '영수증'));
+  draft.meaning.confirmed = true;
+  const bought = d.purchase(d.seed(), [draft], d.id(), '영수증');
+  const item = bought.items.at(-1);
+  assert.equal(item.expectedAt, draft.expiryDate);
+  const moved = d.apply(bought, {
+    id: d.id(),
+    itemId: item.id,
+    action: 'storage_change',
+    storage: '냉동',
+  });
+  assert.equal(moved.items.at(-1).expectedAt, draft.expiryDate);
+  const bad = structuredClone(draft);
+  bad.meaning.resolution.score = 1.1;
+  assert.throws(() => d.purchase(d.seed(), [bad], d.id(), '영수증'));
+  bad.meaning.resolution.score = 0.5;
+  bad.meaning.resolution.classification = 'NON_FOOD';
+  assert.throws(() => d.purchase(d.seed(), [bad], d.id(), '영수증'));
+});
+
+test('receipt price never becomes inventory quantity', async () => {
+  const r = await resolution.resolveReceipt(
+    ['계란 10개 3,000원', '우유 1000원'],
+    new AbortController().signal,
+  );
+  assert.equal(r.rows.length, 1);
+  assert.equal(r.rows[0].quantity, 10);
+  assert.equal(r.unresolved.length, 1);
+});
+
+test('exploration timeout aborts provider work and keeps product for manual review', async () => {
+  let signal;
+  const r = await resolution.resolveReceipt(
+    ['서울 1000'],
+    new AbortController().signal,
+    {
+      resolve: (_, o) => {
+        signal = o.signal;
+        return new Promise(() => {});
+      },
+    },
+  );
+  assert.equal(signal.aborted, true);
+  assert.equal(r.unresolved.length, 1);
+  assert.equal(r.rows.length, 0);
 });

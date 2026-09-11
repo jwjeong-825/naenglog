@@ -1,6 +1,8 @@
+import type { Resolution } from './receipt-resolution';
 import { foods, today, type Draft, type Storage } from './domain';
 export type ProductMeaning = {
   version: 1;
+  resolution?: Resolution;
   normalizedFoodName: string;
   brand: string | null;
   weightPerUnit: number | null;
@@ -37,15 +39,27 @@ export function interpretProduct(line: string): Draft {
       ]
     : null;
   const weightPerUnit = weight ? Number(weight[1]) : null;
-  const storage = foods[name]?.storage ?? '냉장';
+  const catalog: Record<string, { category: string; storage: Storage }> = {
+    만두: { category: '냉동식품', storage: '냉동' },
+    돼지고기: { category: '육류', storage: '냉장' },
+    김: { category: '가공식품', storage: '실온' },
+    라면: { category: '가공식품', storage: '실온' },
+  };
+  const storage = foods[name]?.storage ?? catalog[name]?.storage ?? '냉장';
   const processed =
-    composite || /블랙페퍼|훈제|소시지/.test(stripped) ? true : null;
+    composite ||
+    ['만두', '김', '라면'].includes(name) ||
+    /블랙페퍼|훈제|소시지/.test(stripped)
+      ? true
+      : null;
   return {
     name,
     productName,
     quantity,
     unit: m[3],
-    category: composite ? '완제품' : (foods[name]?.category ?? '미분류'),
+    category: composite
+      ? '완제품'
+      : (foods[name]?.category ?? catalog[name]?.category ?? '미분류'),
     purchasedAt: today(),
     storage,
     meaning: {
@@ -59,7 +73,9 @@ export function interpretProduct(line: string): Draft {
           ? null
           : Math.round(weightPerUnit * quantity * 1000) / 1000,
       packaging: m[3],
-      storageCandidates: name === '닭가슴살' ? ['냉장', '냉동'] : [storage],
+      storageCandidates: ['닭가슴살', '돼지고기'].includes(name)
+        ? ['냉장', '냉동']
+        : [storage],
       processed,
       openingSensitive: processed ? true : null,
       confidence: 'low',

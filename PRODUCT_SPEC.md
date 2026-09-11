@@ -57,3 +57,11 @@ POST /api/ai(operation=config/analyze/interpret/briefing)는 동일 Origin과 �
 ## 대회 AI 제한 체험
 
 분석4회/자연어15회(익명 세션 누적), 브리핑5회/한국 날짜. 실패도 횟수에 포함하며 동일 검증 결과24시간 재조회는 무료다. Mock은 별도0원 장부로 동일 제한 흐름을 검증한다. 전체 유료비용은 서버가 최대값을 선예약하며20,000/25,000원 경고,27,000원 초과 요청 차단이다. 기본 조회·수량 수정·필터·날짜 계산·저장은 제한하지 않는다. 한도 도달 시 기존 냉장고 기능을 계속 사용할 수 있음을 안내하고 브리핑 fallback은 기본 규칙이라고 표시한다. 실제 AI는 아직 없다. 가격 확정 후 체험 횟수는 하향 재평가한다.
+
+## 2026-09-12 · 영수증 입력과 품목 확인
+
+- 홈/구매 추가에서 영수증 촬영하기와 사진 업로드하기를 분리했다. 촬영만 capture=environment, 업로드에는 capture 없음. 두 input은 같은 ReceiptInput onSelect → MIME/5MiB 검증 → encodeImage → /api/ai 경로다. JPG/JPEG/PNG/WebP를 지원한다. 카메라 열림은 기기/브라우저에 따라 파일 선택으로 대체될 수 있다.
+- src/receipt-resolution.ts: 원본 보존, 표시 가격 분리, FOOD/NON_FOOD/UNCERTAIN, 최대3품목/각1.5초/재시도0의 로컬 후보 탐색. 휴지/샴푸/세제/건전지는 제외 목록에 남기고 복원 가능하다. 애매한 품목은 후보 선택/직접 입력/명시 제외 전까지 일괄 등록을 막는다.
+- resolution(score 0~1, classification, method, evidence, candidates)와 excluded를 기존 v1 계약의 optional 확장으로 추가. 이전 snapshot은 호환된다. Mock score는 보정된 확률이 아니며 실제 검색처럼 표시하지 않는다. 임계값0.7/0.9는 CONFIDENCE_THRESHOLDS 상수. 높은 점수라도 최종 확인 후 등록한다(첨부 지시의 최종 확인 흐름 우선).
+- 원본명/식품명/분류/수량/보관/제품 표시 소비기한을 수정할 수 있다. expiryDate가 있으면 예상 D-day와 보관 변경에서도 제품 표시 날짜를 유지한다. 없으면 기존 데모 예상기간을 사용하며 실제 소비기한을 생성했다고 주장하지 않는다.
+- 실제 OCR/Vision/AI 검색은 아직 연결하지 않았다. 이미지 Mock은 식품4개·비식품1개·애매한품목1개 예시다. 잘못된 영수증/흐림 여부를 실제로 판별한다고 주장하지 않는다.

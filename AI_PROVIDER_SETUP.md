@@ -90,3 +90,11 @@ GET /api/internal/ai-budget에 Authorization: Bearer 헤더로 내부 secret을 
 ### 활성화 전 최소 작업과 미완료
 
 개발자가 서버 adapter에서 limits/reportUsage 계약, 모델 일치, 토크나이저/비전 상한, 과금 응답 매핑을 구현하고 가상 Provider 테스트를 통과시킨다. 사용자 승인 후 전용 Project/Key와 하드 한도를 설정하고 서버 secret에 직접 입력한다. 가격/환율 JSON 및 확인값을 설정하고 새 D1 migration을 운영에 적용한 다음 비공개로 작은 실제 요청을 검증한다. 아직 운영 migration/Provider hard limit/실제 가격/실제 adapter/유료 호출은 실행하지 않았다. 이미지 픽셀·EXIF 정규화와 인식 품질 실측도 남아 있다.
+
+## 영수증 분류와 후보 탐색 계약
+
+촬영과 업로드 모두 동일 AnalyzeInput.image를 사용하며 입력 방식은 비용/품질 판단을 바꾸지 않는다. 서버는 사용자 제공 recognition을 받지 않는다. Provider 내부 OCR → resolveReceipt 또는 동등한 구조화 분석 → validateAnalysis → 확인 후 purchase 순서다. 추가된 의미 필드는 resolution(classification,score,method,evidence,candidates), 분석 제외 항목은 excluded. draft는 FOOD만 허용하며 confirmed는 계속 false로 초기화한다.
+
+ProductExplorer.resolve({originalText,normalizedText},{signal,maxCandidates})는 후보 문자열 배열(최대3개)을 반환한다. 현재 기본 구현은 작은 로컬 예시 카탈로그이며 네트워크가 없다. UNCERTAIN만 최대3품목 탐색,1.5초 timeout,취소/잘못된 응답/실패는 사용자 확인으로 남긴다. 실제 상품 메타데이터와 검색 근거의 검증은 공급자 어댑터 구현 시 추가해야 한다.
+
+실제 외부 검색을 연결하려면 별도 검색 요금과 호출 수를 기존 AIBudget 선예약에 포함하고 maxCalls 계약을 확장해야 한다. 현재 유료 계약은 단일 Provider 호출/외부 도구0회이므로 검색을 몰래 추가하면 안 된다. 이번 구현은 로컬 탐색만 사용하고 별도 검색 비용을 발생시키지 않는다. 실제 OCR/검색 품질, 비영수증·흐린 사진 판별, 픽셀/EXIF 정규화, 실기기 후면 카메라 확인은 남아 있다.

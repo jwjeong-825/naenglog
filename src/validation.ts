@@ -1,3 +1,4 @@
+import { assertResolution } from './receipt-resolution';
 import type { Command, Draft, State } from './domain';
 export const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -29,7 +30,10 @@ export function assertDraft(value: unknown): asserts value is Draft {
     !isQuantity(value.quantity) ||
     value.quantity === 0 ||
     !isDate(value.purchasedAt) ||
-    !storage(value.storage)
+    !storage(value.storage) ||
+    (value.expiryDate !== undefined &&
+      (!isDate(value.expiryDate) ||
+        value.expiryDate < String(value.purchasedAt)))
   )
     throw new Error(
       '식재료 정보가 올바르지 않아요. 이름, 수량, 단위와 날짜를 확인해주세요.',
@@ -56,6 +60,11 @@ export function assertDraft(value: unknown): asserts value is Draft {
       !m.reasons.every((r) => text(r, 300))
     )
       throw new Error('상품 의미 해석 결과를 확인해주세요.');
+    if (m.resolution !== undefined) {
+      assertResolution(m.resolution);
+      if (m.resolution.classification !== 'FOOD')
+        throw new Error('확인한 식품만 등록할 수 있어요.');
+    }
     if (m.weightPerUnit === null) {
       if (m.weightUnit !== null || m.totalWeight !== null)
         throw new Error('중량 정보가 일치하지 않아요.');
