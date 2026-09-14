@@ -28,7 +28,7 @@ export type RequestOptions = {
     outputTokens: number;
   }) => void;
 };
-/** Provider implementations return untrusted data. No remote implementation is enabled. */
+/** Provider implementations return untrusted data; remote activation is server configured. */
 export interface AIProvider {
   readonly mode: ProviderMode;
   analyze(input: AnalyzeInput, options: RequestOptions): Promise<unknown>;
@@ -44,6 +44,7 @@ export class AIServiceError extends Error {
     public readonly code:
       | 'trial_limit'
       | 'invalid_response'
+      | 'input_limit'
       | 'timeout'
       | 'cancelled'
       | 'unavailable',

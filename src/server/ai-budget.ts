@@ -1,5 +1,6 @@
 import type { Database } from './repository';
 import type { RequestOptions } from '../ai-service';
+import { AIServiceError } from '../ai-service';
 
 export type Feature = 'analyze' | 'interpret' | 'briefing';
 export type BudgetEnvironment = {
@@ -262,9 +263,18 @@ export class AIBudget {
       });
     });
     let usage: Usage | null = null;
-    const settle = async (success: boolean) =>
+    const settle = async (success: boolean, notStarted = false) =>
       this.mutate(ledgerId, (ledger) => {
         const entry = ledger.entries.find((e) => e.id === id)!;
+        // Only our pre-network input bound can prove no paid request was sent.
+        // Keep the quota entry, but do not halt all visitors for oversized text.
+        if (notStarted && !usage) {
+          ledger.total -= entry.cost;
+          entry.cost = 0;
+          entry.status = 'uncertain';
+          entry.cumulative = ledger.total;
+          return;
+        }
         if (
           usage &&
           usage.model === p?.model &&
@@ -308,7 +318,10 @@ export class AIBudget {
         },
       });
     } catch (error) {
-      await settle(false);
+      await settle(
+        false,
+        error instanceof AIServiceError && error.code === 'input_limit',
+      );
       throw error;
     }
     await settle(true);

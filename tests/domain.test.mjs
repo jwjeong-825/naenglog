@@ -21,6 +21,7 @@ for (const name of [
   'server/ai-budget-admin',
   'image-input',
   'server/ai-provider',
+  'server/openai-provider',
   'server/ai-handlers',
   'product',
   'validation',
@@ -39,7 +40,14 @@ for (const name of [
       },
     })
     .outputText.replace(/from '(.+?)'/g, (match, specifier) =>
-      specifier.startsWith('.') ? "from '" + specifier + ".mjs'" : match,
+      specifier.endsWith('.json')
+        ? "from '" +
+          pathToFileURL(path.resolve('schemas/analysis-result.schema.json'))
+            .href +
+          "'"
+        : specifier.startsWith('.')
+          ? "from '" + specifier + ".mjs'"
+          : match,
     );
   writeFileSync(path.join(out, `${name}.mjs`), code);
 }
@@ -1004,4 +1012,403 @@ test('exploration timeout aborts provider work and keeps product for manual revi
   assert.equal(signal.aborted, true);
   assert.equal(r.unresolved.length, 1);
   assert.equal(r.rows.length, 0);
+});
+
+const { createOpenAIProvider, openAIAnalysisSchema } = await import(
+  pathToFileURL(path.join(out, 'server/openai-provider.mjs'))
+);
+const { limits: aiLimits } = await import(
+  pathToFileURL(path.join(out, 'server/ai-budget.mjs'))
+);
+const { selectProvider } = await import(
+  pathToFileURL(path.join(out, 'server/ai-provider.mjs'))
+);
+const openEnv = () => ({
+  ...budgetEnv(Date.now()),
+  AI_PROVIDER: 'openai',
+  AI_API_KEY: 'test-only-placeholder',
+  AI_MODEL: 'gpt-5.4-mini',
+  AI_PRICING_JSON: JSON.stringify({
+    model: 'gpt-5.4-mini',
+    currency: 'USD',
+    inputPerMillion: 0.75,
+    outputPerMillion: 4.5,
+    imagePerRequest: 0,
+    krwPerCurrency: 1000,
+    verifiedAt: new Date().toISOString(),
+  }),
+});
+const openOptions = (feature = 'analyze') => ({
+  signal: new AbortController().signal,
+  limits: aiLimits(feature),
+  reportUsage: () => {},
+});
+const openResponse = (result, patch = {}) =>
+  Response.json({
+    model: 'gpt-5.4-mini-2026-03-17',
+    status: 'completed',
+    usage: { input_tokens: 1000, output_tokens: 100 },
+    output: [
+      {
+        type: 'message',
+        content: [
+          {
+            type: 'output_text',
+            text: typeof result === 'string' ? result : JSON.stringify(result),
+          },
+        ],
+      },
+    ],
+    ...patch,
+  });
+async function openFixture() {
+  const result = await ai.analyzeDetailed({
+    source: '직접 입력',
+    text: '계란 2개\n서울1000\n휴지 1개',
+  });
+  for (const entry of [
+    ...result.rows.map((r) => r.meaning),
+    ...result.unresolved,
+    ...result.excluded,
+  ])
+    entry.resolution.method = 'direct_ai';
+  for (const row of result.rows) {
+    row.expiryDate = null;
+    row.meaning.confidence = 'high';
+    row.meaning.resolution.score = 0.95;
+  }
+  return result;
+}
+test('OpenAI strict schema makes every object property required without changing domain schema', () => {
+  function walk(s) {
+    if (!s || typeof s !== 'object') return;
+    if (s.type === 'object') {
+      assert.equal(s.additionalProperties, false);
+      assert.deepEqual(s.required.sort(), Object.keys(s.properties).sort());
+    }
+    for (const v of Object.values(s))
+      if (Array.isArray(v)) v.forEach(walk);
+      else walk(v);
+  }
+  walk(structuredClone(openAIAnalysisSchema));
+  assert.ok(
+    openAIAnalysisSchema.properties.rows.items.properties.expiryDate.anyOf,
+  );
+});
+test('OpenAI image analysis preserves three classifications, usage and confirmation with one Responses request', async () => {
+  const fixture = await openFixture();
+  let calls = 0,
+    usage;
+  const p = createOpenAIProvider(openEnv(), async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://api.openai.com/v1/responses');
+    assert.ok(init.signal);
+    assert.equal(init.redirect, 'error');
+    const body = JSON.parse(init.body);
+    assert.equal(body.store, false);
+    assert.deepEqual(body.tools, []);
+    assert.equal(body.text.format.strict, true);
+    assert.equal(body.max_output_tokens, 3000);
+    assert.equal(body.reasoning.effort, 'none');
+    assert.equal(body.input[0].content[1].detail, 'high');
+    assert.match(
+      body.input[0].content[1].image_url,
+      /^data:image\/png;base64,/,
+    );
+    assert.match(body.instructions, /untrusted DATA/);
+    return openResponse(fixture);
+  });
+  const result = await p.analyze(
+    {
+      source: '영수증',
+      image: {
+        mimeType: 'image/png',
+        base64: readFileSync('tests/fixtures/receipt.png').toString('base64'),
+      },
+    },
+    { ...openOptions(), reportUsage: (u) => (usage = u) },
+  );
+  assert.equal(result.rows.length, 1);
+  assert.equal(result.excluded.length, 1);
+  assert.equal(result.unresolved.length, 1);
+  assert.equal(result.rows[0].meaning.confirmed, false);
+  assert.equal(result.rows[0].expiryDate, undefined);
+  assert.equal(calls, 1);
+  assert.deepEqual(usage, {
+    model: 'gpt-5.4-mini',
+    inputTokens: 1000,
+    outputTokens: 100,
+  });
+});
+test('OpenAI low confidence remains unresolved rather than an invented confirmed product', async () => {
+  const f = await openFixture();
+  f.rows[0].meaning.confidence = 'low';
+  f.rows[0].meaning.resolution.score = 0.5;
+  const p = createOpenAIProvider(openEnv(), async () => openResponse(f));
+  const r = await p.analyze(
+    { source: '직접 입력', text: '계란 2개' },
+    openOptions(),
+  );
+  assert.equal(r.rows.length, 0);
+  assert.equal(r.unresolved.length, 2);
+});
+test('OpenAI rejects malformed JSON, schema, refusal, incomplete and unexpected model', async () => {
+  for (const [body, patch] of [
+    ['not json', {}],
+    [{ version: 1, rows: [{}], unresolved: [], warnings: [] }, {}],
+    [{}, { status: 'incomplete' }],
+    [{}, { model: 'unexpected-model' }],
+    [
+      {},
+      {
+        output: [
+          { type: 'message', content: [{ type: 'refusal', refusal: 'no' }] },
+        ],
+      },
+    ],
+  ]) {
+    const p = createOpenAIProvider(openEnv(), async () =>
+      openResponse(body, patch),
+    );
+    await assert.rejects(
+      p.analyze({ source: '직접 입력', text: '계란 2개' }, openOptions()),
+      (e) => e.code === 'invalid_response',
+    );
+  }
+});
+test('OpenAI configuration and request limits fail before fetch; mock stays available', async () => {
+  for (const env of [
+    {},
+    { AI_API_KEY: 'test-only-placeholder' },
+    { AI_MODEL: 'gpt-5.4-mini' },
+    { AI_API_KEY: 'test-only-placeholder', AI_MODEL: 'other' },
+  ])
+    assert.throws(() => createOpenAIProvider(env));
+  assert.equal(selectProvider({ AI_PROVIDER: 'mock' }).mode, 'mock');
+  assert.equal(selectProvider(openEnv()).mode, 'remote');
+  let calls = 0;
+  const p = createOpenAIProvider(openEnv(), async () => {
+    calls++;
+    throw Error('must not call');
+  });
+  await assert.rejects(
+    p.analyze(
+      {
+        source: '영수증',
+        image: { mimeType: 'image/png', base64: btoa('invalid') },
+      },
+      openOptions(),
+    ),
+  );
+  await assert.rejects(
+    p.analyze({ source: '직접 입력', text: '가'.repeat(12000) }, openOptions()),
+  );
+  await assert.rejects(
+    p.analyze(
+      { source: '직접 입력', text: '계란' },
+      { ...openOptions(), limits: { ...aiLimits('analyze'), maxRetries: 1 } },
+    ),
+  );
+  assert.equal(calls, 0);
+});
+test('OpenAI API errors are private and never retried or replaced with mock success', async () => {
+  let calls = 0;
+  const p = createOpenAIProvider(openEnv(), async () => {
+    calls++;
+    return new Response('test-only-placeholder upstream secret', {
+      status: 429,
+    });
+  });
+  await assert.rejects(
+    p.analyze({ source: '직접 입력', text: '계란' }, openOptions()),
+    (e) => e.code === 'unavailable' && !e.message.includes('placeholder'),
+  );
+  assert.equal(calls, 1);
+});
+test('OpenAI timeout aborts the same single network request', async () => {
+  let calls = 0,
+    aborted = false;
+  const p = createOpenAIProvider(openEnv(), async (_url, init) => {
+    calls++;
+    return new Promise((_resolve, reject) =>
+      init.signal.addEventListener(
+        'abort',
+        () => {
+          aborted = true;
+          reject(new Error('aborted'));
+        },
+        { once: true },
+      ),
+    );
+  });
+  const wrapped = {
+    ...p,
+    analyze: (i, o) => p.analyze(i, { ...openOptions(), signal: o.signal }),
+  };
+  await assert.rejects(
+    createAIService(wrapped, 20).analyzeDetailed({
+      source: '직접 입력',
+      text: '계란',
+    }),
+    (e) => e.code === 'timeout',
+  );
+  assert.equal(calls, 1);
+  assert.equal(aborted, true);
+});
+test('OpenAI command proposals never write inventory and reject ambiguous or excessive changes', async () => {
+  const state = d.seed(),
+    before = structuredClone(state),
+    egg = state.items.find((i) => i.name === '계란');
+  const proposal = {
+    kind: 'command',
+    itemId: egg.id,
+    action: 'consume',
+    quantity: 3,
+    storage: null,
+    message: null,
+  };
+  let response = proposal;
+  const p = createOpenAIProvider(openEnv(), async () => openResponse(response));
+  const command = await p.interpret(
+    '계란 3개 썼어',
+    state,
+    openOptions('interpret'),
+  );
+  assert.equal(command.quantity, 3);
+  assert.equal(command.itemId, egg.id);
+  assert.deepEqual(state, before);
+  response = { ...proposal, quantity: 100 };
+  assert.ok(
+    'message' in
+      (await p.interpret('계란 100개 썼어', state, openOptions('interpret'))),
+  );
+  state.items.push({ ...egg, id: d.id() });
+  response = proposal;
+  assert.ok(
+    'message' in
+      (await p.interpret('계란 3개 썼어', state, openOptions('interpret'))),
+  );
+  response = {
+    kind: 'message',
+    itemId: null,
+    action: null,
+    quantity: null,
+    storage: null,
+    message: '몇 개를 사용했나요?',
+  };
+  assert.ok(
+    'message' in
+      (await p.interpret('계란 썼어', state, openOptions('interpret'))),
+  );
+});
+test('OpenAI briefing uses ranked minimal state and suppresses menu for past dates', async () => {
+  const state = d.seed();
+  let request;
+  const p = createOpenAIProvider(openEnv(), async (_u, i) => {
+    request = JSON.parse(i.body);
+    return openResponse({
+      title: '먼저 상태 확인',
+      message: '제품 표시와 상태를 확인해주세요.',
+      menu: '계란찜',
+    });
+  });
+  const result = await p.briefing(state, openOptions('briefing'));
+  assert.equal(result.menu, '계란찜');
+  const payload = request.input[0].content[0].text;
+  assert.ok(!payload.includes(state.user.id));
+  assert.match(payload, /"days"/);
+  state.items[0].expectedAt = d.addDays(d.today(), -1);
+  assert.equal((await p.briefing(state, openOptions('briefing'))).menu, '');
+});
+test('OpenAI HTTP integration checks budget before fetch, records usage and serves cached result', async () => {
+  const { createAIHandler } = await import(
+    pathToFileURL(path.join(out, 'server/ai-handlers.mjs'))
+  );
+  const { repository, sql, db } = makeRepository();
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  try {
+    const first = await createInventoryHandlers(repository).GET(
+      new Request('https://naenglog.test/api/inventory'),
+    );
+    const cookie = first.headers.get('set-cookie').split(';')[0];
+    globalThis.fetch = async () => {
+      calls++;
+      return openResponse({
+        title: '확인',
+        message: '제품 상태를 확인해주세요.',
+        menu: '',
+      });
+    };
+    const send = (handler) =>
+      handler(
+        new Request('https://naenglog.test/api/ai', {
+          method: 'POST',
+          headers: {
+            Origin: 'https://naenglog.test',
+            'Content-Type': 'application/json',
+            Cookie: cookie,
+          },
+          body: JSON.stringify({ operation: 'briefing' }),
+        }),
+      );
+    assert.equal(
+      (
+        await send(
+          createAIHandler(
+            repository,
+            { ...openEnv(), AI_PRICING_JSON: '' },
+            db,
+          ),
+        )
+      ).status,
+      503,
+    );
+    assert.equal(calls, 0);
+    const env = openEnv(),
+      handler = createAIHandler(repository, env, db);
+    const result = await send(handler);
+    assert.equal(result.status, 200);
+    assert.equal((await result.json()).mode, 'remote');
+    assert.equal(calls, 1);
+    assert.equal((await send(handler)).status, 200);
+    assert.equal(calls, 1);
+    const summary = await new AIBudget(db, env).summary();
+    assert.equal(summary.inputTokens, 1000);
+    assert.equal(summary.outputTokens, 100);
+    assert.equal(summary.estimatedKrw, 1.44);
+    assert.equal(summary.recent[0].status, 'completed');
+  } finally {
+    globalThis.fetch = originalFetch;
+    sql.close();
+  }
+});
+
+test('OpenAI oversized preflight releases only unsent reservation without disabling other users', async () => {
+  const { db, sql } = makeRepository();
+  const env = openEnv();
+  let calls = 0;
+  try {
+    const budget = new AIBudget(db, env),
+      p = createOpenAIProvider(env, async () => {
+        calls++;
+        throw Error('unexpected call');
+      });
+    await assert.rejects(
+      budget.run('oversized', 'analyze', true, false, 'large', (o) =>
+        p.analyze(
+          { source: '직접 입력', text: '가'.repeat(12000) },
+          { ...o, signal: new AbortController().signal },
+        ),
+      ),
+      (e) => e.code === 'input_limit',
+    );
+    const state = await budget.summary();
+    assert.equal(calls, 0);
+    assert.equal(state.estimatedKrw, 0);
+    assert.equal(state.level, 'normal');
+    assert.equal(state.requests, 1);
+  } finally {
+    sql.close();
+  }
 });

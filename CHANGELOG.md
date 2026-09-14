@@ -62,3 +62,7 @@
 - 식품/비식품/미확인 순서, 접이식 상품 정보와 항상 보이는 최종 확인.
 - 상세의 재고 조작 우선 배치와 동일 크기 하단 메뉴. 홈 입력 방식 변경 시 이전 분석 결과 분리.
 - 기존 도메인/저장/예산/Mock 계약 및 회귀37개 유지.
+
+## OpenAI remote adapter
+
+Responses API analyze/interpret/briefing, strict schema 변환, 서버 키/Project 헤더, 단일 fetch/AbortSignal/실제 usage 비용 정산, 불확실 결과 확인 및 명령 사전 검증 추가. Mock 기본 유지. 문서/환경 예시 갱신 및 회귀48개 통과. 실키 및 실제 유료 호출 없음.

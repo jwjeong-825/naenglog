@@ -1,14 +1,14 @@
 # 아키텍처
 
 ## 구성
-Sites 공식 Vinext + React 19 + TypeScript + Shadcn/Base UI를 유지한다. 서버는 Cloudflare Worker, 저장은 Sites가 제공하는 D1이다. 실제 AI API는 연결하지 않는다.
+Sites 공식 Vinext + React 19 + TypeScript + Shadcn/Base UI를 유지한다. 서버는 Cloudflare Worker, 저장은 Sites가 제공하는 D1이다. 실제 AI용 서버 어댑터가 있으며 기본값은 Mock이다. 키/운영 활성화는 사용자 설정을 기다린다.
 
 UI → 비동기 AI service → 결과 검증 → 사용자 확인 → POST /api/inventory → 도메인 검증/계산 → D1 원자적 저장 → 최신 snapshot.
 
 - src/domain.ts: 수량/구매/원장/보관/우선순위. 모든 달력일은 Asia/Seoul.
 - src/validation.ts: 신뢰 경계의 Draft/Command/State 검증. 원장 연속성, 참조, 잔액, 중복 ID, 날짜 검사.
 - src/ai-service.ts: Provider 계약, JSON 검증, 취소, 타임아웃, 외부 오류 메시지 차단.
-- src/ai.ts: Mock 구현과 동기 기본 브리핑. 원격 구현 없음.
+- src/ai.ts: Mock 구현과 동기 기본 브리핑. 원격은 src/server/openai-provider.ts로 분리.
 - src/api.ts: 서버 통신, 15초 타임아웃, 검증된 legacy 가져오기.
 - src/server/repository.ts: D1 prepared statements, optimistic concurrency(CAS), 재전송 처리.
 - src/server/handlers.ts: HTTP/세션/Origin/본문 제한.
@@ -37,7 +37,7 @@ Draft.meaning optional v1로 기존 snapshot/DB migration 없이 호환한다. s
 
 src/ai-client.ts → app/api/ai/route.ts → src/server/ai-handlers.ts → src/server/ai-provider.ts → AIProvider. 현재 Mock도 이 경로로 실행된다. 분석은 src/analysis.ts 및 schemas/analysis-result.schema.json의 envelope를 사용한다. 이미지 공통 제한은 src/image-input.ts. HTTP 입력은 크기 제한 스트림을 읽고 서버 세션의 D1 상태로 interpret/briefing을 실행한다.
 
-실제 어댑터는 서버 composition root에만 추가한다. 환경변수는 Cloudflare 서버 env에서 읽고 브라우저 번들로 전달하지 않는다. remote는 미구현 상태에서 503으로 닫히며 재고 조회 자체는 AI 설정 오류와 분리한다.
+실제 어댑터는 서버 composition root에만 추가한다. 환경변수는 Cloudflare 서버 env에서 읽고 브라우저 번들로 전달하지 않는다. openai는 실제 어댑터를 선택하고 설정 누락 시 503으로 닫히며 재고 조회 자체는 AI 설정 오류와 분리한다.
 
 ## 제한 체험 예산 경계
 
@@ -46,3 +46,7 @@ src/ai-client.ts → app/api/ai/route.ts → src/server/ai-handlers.ts → src/s
 ## 영수증 입력/분류 확장
 
 app/receipt-input.tsx는 두 파일 선택 UI와 하나의 파일 이벤트를 제공한다. Home의 selectImage/encodeImage/server 경계는 공통이다. src/receipt-resolution.ts는 OCR 이후 텍스트의 로컬 분류·후보 탐색을 담당하며 ProductExplorer 계약으로 분리한다. app/receipt-review.tsx는 unresolved 수정/제외/비식품 복원을 담당한다. ProductMeaning.resolution과 Draft.expiryDate는 optional이므로 D1 스키마 migration은 필요 없다. validateAnalysis/assertDraft가 신규 필드와 FOOD 상태를 검사한다. 구조화 JSON schema도 갱신했다. 분석 캐시 정책 version을2로 올렸으며 비용 장부/체험 quota는 초기화하지 않았다.
+
+## OpenAI 어댑터
+
+서버 fetch의 Responses API 요청과 usage 매핑만 경계에 추가했다. API 키는 서버 env→Authorization 헤더, Project ID는 OpenAI-Project 헤더로만 전달한다. 서버가 최소 재고 필드를 제공하고 모델은 DB에 접근하지 않는다. 요청 strict JSON schema는 기존 파일에서 변환하고 기존 검증기가 출력 계약을 확인한다. UTF-8 텍스트+schema+프레이밍+모델 비전 상한을 선검사한다. 예산/캐시/DB migration 변경 없이 actual usage를 reportUsage에 연결했다. 실제 환경 키 없음/유료 호출 없음.

@@ -554,6 +554,7 @@ export default function Home() {
                   </summary>
                   <h3>{brief?.title ?? '재료를 살펴보고 있어요'}</h3>
                   <p>{brief?.message}</p>
+                  {brief?.menu && <p>활용 아이디어 · {brief.menu}</p>}
                   <button
                     className="text-button"
                     onClick={() =>
@@ -844,7 +845,7 @@ export default function Home() {
                       <p className="mock-warning">
                         {providerMode === 'mock'
                           ? '현재는 실제 인식 없이 식품 4개·비식품 1개·애매한 품목 1개 예시를 보여줍니다. 사진 속 구매내역과 다를 수 있어요.'
-                          : '이미지에서 상품을 분석합니다. 결과를 확인한 뒤 등록해주세요.'}{' '}
+                          : '이미지를 OpenAI에 보내 상품을 분석합니다. 결과를 확인한 뒤 등록해주세요.'}{' '}
                         이미지는 분석을 위해 이 서비스 서버로 전송되며 저장하지
                         않습니다.
                       </p>

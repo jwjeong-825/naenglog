@@ -7,7 +7,9 @@ function handlers() {
   return createInventoryHandlers(
     new InventoryRepository(
       db,
-      (env as unknown as AIEnvironment).AI_PROVIDER === 'remote'
+      ['remote', 'openai'].includes(
+        (env as unknown as AIEnvironment).AI_PROVIDER ?? '',
+      )
         ? 'remote'
         : 'mock',
     ),
