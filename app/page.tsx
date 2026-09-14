@@ -13,15 +13,14 @@ import {
   House,
   Refrigerator,
   Plus,
-  Sparkles,
+  MessageSquare,
+  ScanLine,
   History,
   ArrowUpRight,
   ArrowLeft,
   Check,
-  Snowflake,
   ChevronRight,
   Send,
-  Leaf,
 } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -67,10 +66,10 @@ const actionNames = {
   storage_change: '보관 변경',
 };
 const navs = [
-  ['home', '오늘', House],
+  ['home', '홈', House],
   ['fridge', '냉장고', Refrigerator],
   ['add', '추가', Plus],
-  ['assistant', '도우미', Sparkles],
+  ['assistant', '빠른 기록', MessageSquare],
   ['history', '기록', History],
 ] as const;
 function StorageSelect({
@@ -245,6 +244,15 @@ export default function Home() {
     setPending(null);
     window.scrollTo({ top: 0 });
   };
+  const openAdd = (nextSource: string) => {
+    if (source !== nextSource) {
+      setRows([]);
+      setUnresolved([]);
+      setExcluded([]);
+    }
+    setSource(nextSource);
+    go('add');
+  };
   const commit = async (mutation: Mutation, message: string) => {
     if (mutationRef.current) return false;
     mutationRef.current = true;
@@ -387,14 +395,10 @@ export default function Home() {
       if (requestRef.current === controller) setBusy(false);
     }
   };
-  const card = (i: (typeof list)[number], index?: number) => (
+  const card = (i: (typeof list)[number]) => (
     <button key={i.id} className="food-row" onClick={() => choose(i.id)}>
-      <span className="food-icon">{foods[i.name]?.emoji ?? '🌱'}</span>
       <span className="food-info">
-        <strong>
-          {index !== undefined && <span className="rank">0{index + 1} </span>}
-          {i.name}
-        </strong>
+        <strong>{i.name}</strong>
         <small>
           {i.quantity}
           {i.unit} · {i.storage}
@@ -403,7 +407,11 @@ export default function Home() {
       <span
         className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
       >
-        {i.days < 0 ? '시점 지남' : i.days === 0 ? '오늘' : `D-${i.days}`}
+        {i.days < 0
+          ? `D+${Math.abs(i.days)}`
+          : i.days === 0
+            ? 'D-Day'
+            : `D-${i.days}`}
       </span>
       <ChevronRight size={17} />
     </button>
@@ -412,21 +420,17 @@ export default function Home() {
     <div className="app-shell">
       <header className="app-header">
         <button className="brand" onClick={() => go('home')}>
-          <span className="brand-icon">
-            <Refrigerator size={23} />
-          </span>
-          냉로그<span className="brand-dot">.</span>
+          냉로그
         </button>
-        <span className="demo-tag">
-          <span /> DEMO
-        </span>
+        <button
+          className="header-add"
+          onClick={() => go('add')}
+          aria-label="식품 추가"
+        >
+          <Plus size={20} /> 추가
+        </button>
       </header>
       <main>
-        <div className="mode-note">
-          <Sparkles size={14} />{' '}
-          {providerMode === 'mock' ? '모의 AI 체험' : 'AI 분석'} · 나만의
-          냉장고에 저장돼요
-        </div>
         {error && (
           <div role="alert" className="alert">
             {error}
@@ -468,21 +472,7 @@ export default function Home() {
           <>
             {view === 'home' && (
               <>
-                <section className="receipt-entry panel">
-                  <h2>영수증 한 장으로 채우는 냉장고</h2>
-                  <p>
-                    구매 품목을 이해하고, 오늘 먼저 확인할 식품까지 안내해요.
-                  </p>
-                  <ReceiptInput
-                    disabled={busy}
-                    onSelect={(file) => {
-                      setSource('영수증');
-                      go('add');
-                      selectImage(file);
-                    }}
-                  />
-                </section>
-                <div className="heading">
+                <div className="heading home-heading">
                   <div>
                     <p className="eyebrow">
                       {new Date().toLocaleDateString('ko-KR', {
@@ -492,134 +482,97 @@ export default function Home() {
                         weekday: 'long',
                       })}
                     </p>
-                    <h1>오늘의 냉장고</h1>
+                    <h1>내 냉장고</h1>
+                    <p className="home-status">
+                      먼저 살펴볼 식품 <strong>{urgent.length}개</strong>
+                      {expired.length > 0 && (
+                        <span> · 시점 지난 식품 {expired.length}개</span>
+                      )}
+                    </p>
                   </div>
-                  <span className="round-icon">
-                    <Leaf />
-                  </span>
                 </div>
-                <section className="brief-card">
-                  <div className="brief-top">
-                    <span>
-                      <Sparkles size={16} /> 오늘의 브리핑
-                    </span>
-                    <span>{briefSource}</span>
+                <div
+                  className="storage-summary"
+                  aria-label="보관 위치별 식품 수"
+                >
+                  {['냉장', '냉동', '실온'].map((location) => (
+                    <button
+                      key={location}
+                      onClick={() => {
+                        setFilter(location);
+                        go('fridge');
+                      }}
+                    >
+                      <span>{location}</span>
+                      <strong>
+                        {list.filter((i) => i.storage === location).length}
+                        <small>개</small>
+                      </strong>
+                    </button>
+                  ))}
+                </div>
+                <section>
+                  <div className="section-heading">
+                    <h2>먼저 확인해 주세요</h2>
+                    <button
+                      onClick={() => {
+                        setFilter('전체');
+                        go('fridge');
+                      }}
+                    >
+                      전체 보기 <ChevronRight size={15} />
+                    </button>
                   </div>
-                  <h2>
-                    {brief?.title ?? '오늘의 재료를 살펴보고 있어요'}
-                    <span className="accent-dot">.</span>
-                  </h2>
+                  <div className="food-list">
+                    {list.length ? (
+                      list.slice(0, 5).map((i) => card(i))
+                    ) : (
+                      <Blank text="영수증이나 직접 입력으로 첫 식품을 추가해 보세요." />
+                    )}
+                  </div>
+                  <p className="footnote">
+                    D-Day는 제품 표시 또는 보관별 예상 시점이에요. 시점이 지난
+                    식품은 상태부터 확인해 주세요.
+                  </p>
+                </section>
+                <div className="action-grid home-actions">
+                  <button className="primary" onClick={() => openAdd('영수증')}>
+                    <ScanLine size={18} />
+                    영수증으로 추가
+                  </button>
+                  <button
+                    className="secondary"
+                    onClick={() => openAdd('직접 입력')}
+                  >
+                    <Plus size={18} />
+                    직접 추가
+                  </button>
+                </div>
+                <details className="daily-note">
+                  <summary>
+                    오늘의 보관 안내 <span>{briefSource}</span>
+                  </summary>
+                  <h3>{brief?.title ?? '재료를 살펴보고 있어요'}</h3>
                   <p>{brief?.message}</p>
                   <button
-                    className="light-button"
+                    className="text-button"
                     onClick={() =>
                       list.length
                         ? choose((expired[0] ?? list[0]).id)
                         : go('add')
                     }
                   >
-                    {list.length
-                      ? `${(expired[0] ?? list[0]).name} 상태 확인하고 기록하기`
-                      : '첫 구매내역 추가하기'}{' '}
-                    <ArrowUpRight size={17} />
+                    {list.length ? '식품 상태 확인하기' : '첫 식품 추가하기'}
+                    <ChevronRight size={16} />
                   </button>
-                  <div className="brief-footer">
-                    판단 이유 확인 → 재료 상태 확인 → 소비·보관 기록
-                  </div>
-                </section>
-                <div className="stats">
-                  <div>
-                    <span>함께 관리 중</span>
-                    <strong>
-                      {list.length}
-                      <small>가지</small>
-                    </strong>
-                  </div>
-                  <div>
-                    <span>먼저 살펴볼 재료</span>
-                    <strong className="orange">
-                      {urgent.length}
-                      <small>가지</small>
-                    </strong>
-                  </div>
-                  <div>
-                    <span>시점 지난 재료</span>
-                    <strong>
-                      {expired.length}
-                      <small>가지</small>
-                    </strong>
-                  </div>
-                </div>
-                <section>
-                  <div className="section-heading">
-                    <h2>오늘 확인할 순서</h2>
-                    <button onClick={() => go('fridge')}>
-                      전체 보기 <ChevronRight size={15} />
-                    </button>
-                  </div>
-                  <div className="panel food-list">
-                    {list.length ? (
-                      list.slice(0, 3).map((i, n) => card(i, n))
-                    ) : (
-                      <Blank text="구매내역을 추가해 냉장고를 채워보세요." />
-                    )}
-                  </div>
-                </section>
-                {list.some(
-                  (i) =>
-                    i.name === '닭가슴살' &&
-                    i.storage === '냉장' &&
-                    i.days >= 0 &&
-                    i.days <= 2,
-                ) && (
-                  <button
-                    className="storage-tip"
-                    onClick={() =>
-                      choose(
-                        list.find(
-                          (i) => i.name === '닭가슴살' && i.storage === '냉장',
-                        )!.id,
-                      )
-                    }
-                  >
-                    <Snowflake size={24} />
-                    <span>
-                      <strong>오늘 쓰지 않는다면 보관 표시 확인</strong>
-                      <small>닭가슴살 보관 방법을 확인해보세요</small>
-                    </span>
-                    <ChevronRight size={18} />
-                  </button>
-                )}
-                {brief?.menu && (
-                  <section className="meal-card">
-                    <span className="eyebrow">남은 재료로 한 끼</span>
-                    <h3>{brief.menu}</h3>
-                    <p>먼저 사용할 재료를 함께 꺼내보세요.</p>
-                    <button
-                      onClick={() => {
-                        go('assistant');
-                        setCommandText('오늘 뭐부터 먹어?');
-                      }}
-                    >
-                      재료 우선순위 확인 <ArrowUpRight size={16} />
-                    </button>
-                  </section>
-                )}
-                <button className="primary wide" onClick={() => go('add')}>
-                  <Plus size={19} /> 구매내역 추가하기
-                </button>
-                <p className="footnote">
-                  예상 시점은 데모 기준입니다. 제품 표시와 실제 상태를 먼저
-                  확인해주세요.
-                </p>
+                </details>
               </>
             )}
             {view === 'fridge' && (
               <>
                 <div className="heading">
                   <div>
-                    <p className="eyebrow">MY FRIDGE</p>
-                    <h1>우리 집 냉장고</h1>
+                    <h1>냉장고 목록</h1>
                   </div>
                   <span>{list.length}가지</span>
                 </div>
@@ -628,13 +581,22 @@ export default function Home() {
                   onValueChange={(v) => setFilter(String(v))}
                 >
                   <TabsList className="filter-tabs">
-                    {['전체', '냉장', '냉동', '실온', '곧 소비'].map((v) => (
+                    {['전체', '냉장', '냉동', '실온'].map((v) => (
                       <TabsTrigger key={v} value={v}>
                         {v}
                       </TabsTrigger>
                     ))}
                   </TabsList>
                 </Tabs>
+                <button
+                  className="text-button near-filter"
+                  aria-pressed={filter === '곧 소비'}
+                  onClick={() =>
+                    setFilter(filter === '곧 소비' ? '전체' : '곧 소비')
+                  }
+                >
+                  곧 소비할 식품만 보기
+                </button>
                 <div className="panel food-list">
                   {list
                     .filter(
@@ -662,49 +624,25 @@ export default function Home() {
                   <ArrowLeft size={18} /> 냉장고
                 </button>
                 <section className="panel detail">
-                  <span className="detail-emoji">
-                    {foods[item.name]?.emoji ?? '🌱'}
-                  </span>
                   <p className="eyebrow">{item.category}</p>
                   <h1>{item.name}</h1>
+                  {list
+                    .filter((i) => i.id === item.id)
+                    .map((i) => (
+                      <span
+                        key={i.id}
+                        className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
+                      >
+                        {i.days < 0
+                          ? `D+${Math.abs(i.days)}`
+                          : i.days === 0
+                            ? 'D-Day'
+                            : `D-${i.days}`}
+                      </span>
+                    ))}
                   <p>
                     {item.quantity}
                     {item.unit} 남음 · {item.storage}
-                  </p>
-                  <dl>
-                    <div>
-                      <dt>상품명</dt>
-                      <dd>{item.productName}</dd>
-                    </div>
-                    <div>
-                      <dt>구매일</dt>
-                      <dd>{item.purchasedAt}</dd>
-                    </div>
-                    <div>
-                      <dt>등록일</dt>
-                      <dd>{calendarDate(item.createdAt)}</dd>
-                    </div>
-                    <div>
-                      <dt>예상 사용 시점</dt>
-                      <dd>{item.expectedAt}</dd>
-                    </div>
-                  </dl>
-                  {item.meaning && (
-                    <p className="footnote">
-                      상품 해석 기록 · {item.meaning.brand ?? '브랜드 미확인'} ·{' '}
-                      {item.meaning.packaging ?? '포장 미확인'}
-                      <br />
-                      구매 당시 총량:{' '}
-                      {item.meaning.totalWeight === null
-                        ? '미확인'
-                        : String(item.meaning.totalWeight) +
-                          item.meaning.weightUnit}{' '}
-                      · 현재 남은 중량이 아닙니다.
-                    </p>
-                  )}
-                  <p className="footnote">
-                    모의 정책으로 계산한 시점이며 식품 안전을 보장하지 않아요.
-                    개봉 여부, 제품 표시와 실제 상태를 확인해주세요.
                   </p>
                   <div className="field-label">
                     보관 방법
@@ -784,6 +722,44 @@ export default function Home() {
                       이만큼 폐기
                     </button>
                   </div>
+                  <details className="daily-note">
+                    <summary>상품 및 보관 정보</summary>
+                    <dl>
+                      <div>
+                        <dt>상품명</dt>
+                        <dd>{item.productName}</dd>
+                      </div>
+                      <div>
+                        <dt>구매일</dt>
+                        <dd>{item.purchasedAt}</dd>
+                      </div>
+                      <div>
+                        <dt>등록일</dt>
+                        <dd>{calendarDate(item.createdAt)}</dd>
+                      </div>
+                      <div>
+                        <dt>예상 사용 시점</dt>
+                        <dd>{item.expectedAt}</dd>
+                      </div>
+                    </dl>
+                    {item.meaning && (
+                      <p className="footnote">
+                        상품 해석 기록 · {item.meaning.brand ?? '브랜드 미확인'}{' '}
+                        · {item.meaning.packaging ?? '포장 미확인'}
+                        <br />
+                        구매 당시 총량:{' '}
+                        {item.meaning.totalWeight === null
+                          ? '미확인'
+                          : String(item.meaning.totalWeight) +
+                            item.meaning.weightUnit}{' '}
+                        · 현재 남은 중량이 아닙니다.
+                      </p>
+                    )}
+                    <p className="footnote">
+                      모의 정책으로 계산한 시점이며 식품 안전을 보장하지 않아요.
+                      개봉 여부, 제품 표시와 실제 상태를 확인해주세요.
+                    </p>
+                  </details>
                 </section>
               </>
             )}
@@ -791,11 +767,12 @@ export default function Home() {
               <>
                 <div className="heading">
                   <div>
-                    <p className="eyebrow">PURCHASE TO FRIDGE</p>
-                    <h1>장 본 내역을 알려주세요</h1>
+                    <h1>식품 추가</h1>
                   </div>
                 </div>
-                <p className="intro">기록은 간단하게, 정리는 냉로그에게.</p>
+                <p className="intro">
+                  장 본 식품을 확인하고 냉장고에 넣어 주세요.
+                </p>
                 <Tabs
                   value={source}
                   onValueChange={(v) => {
@@ -818,7 +795,7 @@ export default function Home() {
                   </TabsList>
                 </Tabs>
                 <p className="footnote">
-                  영수증 한 장에서 식품을 골라 확인 후 냉장고에 채워요.{' '}
+                  사진을 분석하거나 식품을 직접 입력할 수 있어요.{' '}
                   {providerMode === 'mock' && '현재는 Mock 체험입니다.'}
                 </p>
                 <section className="panel">
@@ -878,7 +855,7 @@ export default function Home() {
                     className="primary wide"
                     onClick={analyze}
                   >
-                    <Sparkles size={17} />
+                    <ScanLine size={17} />
                     {busy
                       ? providerMode === 'mock'
                         ? '예시 품목 분류·의미 정리 중…'
@@ -909,43 +886,23 @@ export default function Home() {
                   </li>
                   <li>4. 확인한 식품 일괄 등록</li>
                 </ol>
-                <ReceiptReview
-                  pending={unresolved}
-                  excluded={excluded}
-                  onResolve={(i, draft) => {
-                    setRows([...rows, draft]);
-                    setUnresolved(unresolved.filter((_, j) => i !== j));
-                  }}
-                  onDismiss={(i) =>
-                    setUnresolved(unresolved.filter((_, j) => i !== j))
-                  }
-                  onRestore={(i) => {
-                    const item = excluded[i];
-                    setUnresolved([
-                      ...unresolved,
-                      {
-                        productName: item.productName,
-                        reason: '식품명과 수량을 직접 확인해주세요.',
-                      },
-                    ]);
-                    setExcluded(excluded.filter((_, j) => i !== j));
-                  }}
-                />
+
                 {rows.length > 0 && (
                   <section>
                     <div className="section-heading">
-                      <h2>이렇게 등록할까요?</h2>
+                      <h2>구매한 식품을 정리했어요</h2>
                       <span>{rows.length}가지</span>
                     </div>
                     <p className="footnote">
-                      원본 상품 → 의미 해석 → 관리 단위 확인 → 등록. 수정한 뒤
-                      각 상품의 확인 완료를 선택해주세요. 같은 재료는 별도 구매
-                      건으로 추가됩니다.
+                      식품별 이름·수량·보관을 확인해주세요. 자세한 상품 정보는
+                      펼쳐 수정할 수 있어요.
                     </p>
                     {rows.map((d, n) => (
                       <div className="panel draft" key={n}>
                         <div className="draft-head">
-                          <span>재료 {n + 1}</span>
+                          <span>
+                            식품 {n + 1} · {d.name}
+                          </span>
                           <button
                             onClick={() =>
                               setRows(rows.filter((_, j) => j !== n))
@@ -1056,6 +1013,32 @@ export default function Home() {
                         </div>
                       </div>
                     ))}
+                  </section>
+                )}
+                <ReceiptReview
+                  pending={unresolved}
+                  excluded={excluded}
+                  onResolve={(i, draft) => {
+                    setRows([...rows, draft]);
+                    setUnresolved(unresolved.filter((_, j) => i !== j));
+                  }}
+                  onDismiss={(i) =>
+                    setUnresolved(unresolved.filter((_, j) => i !== j))
+                  }
+                  onRestore={(i) => {
+                    const item = excluded[i];
+                    setUnresolved([
+                      ...unresolved,
+                      {
+                        productName: item.productName,
+                        reason: '식품명과 수량을 직접 확인해주세요.',
+                      },
+                    ]);
+                    setExcluded(excluded.filter((_, j) => i !== j));
+                  }}
+                />
+                {rows.length > 0 && (
+                  <section className="registration-footer">
                     {unresolved.length > 0 && (
                       <p className="footnote">
                         확인이 필요한 품목을 수정하거나 제외하면 일괄 등록할 수
@@ -1104,16 +1087,11 @@ export default function Home() {
               <>
                 <div className="heading">
                   <div>
-                    <p className="eyebrow">FRIDGE ASSISTANT</p>
-                    <h1>말로 정리하는 냉장고</h1>
+                    <h1>빠른 기록</h1>
                   </div>
-                  <Sparkles />
                 </div>
                 <section className="assistant-welcome">
-                  <span className="round-icon">
-                    <Sparkles />
-                  </span>
-                  <h2>무엇을 도와드릴까요?</h2>
+                  <h2>사용한 만큼, 한 문장으로</h2>
                   <p>
                     사용한 재료를 알려주세요.
                     <br />
@@ -1146,7 +1124,7 @@ export default function Home() {
                     void ask();
                   }}
                 >
-                  <label htmlFor="command">냉장고에게 한마디</label>
+                  <label htmlFor="command">사용하거나 옮긴 식품</label>
                   <div>
                     <input
                       id="command"
@@ -1172,7 +1150,7 @@ export default function Home() {
                 {busy && <Skeleton className="h-20 w-full" />}
                 {answer && (
                   <div className="panel answer">
-                    <Sparkles size={20} />
+                    <MessageSquare size={20} />
                     <p>{answer}</p>
                   </div>
                 )}
@@ -1188,7 +1166,6 @@ export default function Home() {
               <>
                 <div className="heading">
                   <div>
-                    <p className="eyebrow">LITTLE ACTIONS, LESS WASTE</p>
                     <h1>냉장고의 기록</h1>
                   </div>
                 </div>
@@ -1329,7 +1306,7 @@ export default function Home() {
             className={view === v ? 'active' : ''}
             onClick={() => go(v)}
           >
-            <span className={v === 'add' ? 'nav-add' : ''}>
+            <span className="nav-icon">
               <Icon size={21} />
             </span>
             <span>{label}</span>

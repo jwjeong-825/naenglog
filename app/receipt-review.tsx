@@ -20,11 +20,9 @@ function ReviewItem({
     [unit, setUnit] = useState('개'),
     [error, setError] = useState('');
   return (
-    <div className="panel">
-      <h3>이 상품이 무엇인가요?</h3>
-      <p>
-        <strong>{item.productName}</strong> · {item.reason}
-      </p>
+    <div className="uncertain-item">
+      <h3>{item.productName}</h3>
+      <p>{item.reason}</p>
       {item.resolution?.evidence.map((e) => (
         <p className="footnote" key={e}>
           {e}
@@ -32,7 +30,11 @@ function ReviewItem({
       ))}
       <div className="suggestions">
         {item.resolution?.candidates.map((candidate) => (
-          <button key={candidate} onClick={() => setName(candidate)}>
+          <button
+            key={candidate}
+            aria-pressed={name === candidate}
+            onClick={() => setName(candidate)}
+          >
             {candidate} 후보
           </button>
         ))}
@@ -118,7 +120,23 @@ export function ReceiptReview({
   onRestore: (index: number) => void;
 }) {
   return (
-    <section aria-label="구매 품목 분류 확인">
+    <section
+      className="receipt-classification"
+      aria-label="구매 품목 분류 확인"
+    >
+      {excluded.length > 0 && (
+        <details className="excluded-products">
+          <summary>비식품으로 제외한 품목 {excluded.length}개</summary>
+          {excluded.map((item, i) => (
+            <div key={item.productName + ':' + i}>
+              <p>
+                {item.productName} · {item.reason}
+              </p>
+              <button onClick={() => onRestore(i)}>식품인지 다시 확인</button>
+            </div>
+          ))}
+        </details>
+      )}
       {pending.length > 0 && (
         <>
           <h2>확인이 필요한 품목 {pending.length}개</h2>
@@ -131,19 +149,6 @@ export function ReceiptReview({
             />
           ))}
         </>
-      )}
-      {excluded.length > 0 && (
-        <details className="panel">
-          <summary>비식품으로 제외한 품목 {excluded.length}개</summary>
-          {excluded.map((item, i) => (
-            <div key={item.productName + ':' + i}>
-              <p>
-                {item.productName} · {item.reason}
-              </p>
-              <button onClick={() => onRestore(i)}>식품인지 다시 확인</button>
-            </div>
-          ))}
-        </details>
       )}
     </section>
   );
