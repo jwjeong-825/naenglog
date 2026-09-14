@@ -1,5 +1,5 @@
 import type { Database } from './repository';
-import type { RequestOptions } from '../ai-service';
+import type { RequestOptions, ProviderDiagnostic } from '../ai-service';
 import { AIServiceError } from '../ai-service';
 
 export type Feature = 'analyze' | 'interpret' | 'briefing';
@@ -35,6 +35,7 @@ type Entry = {
   status: 'pending' | 'completed' | 'uncertain';
   usage: Usage | null;
   pricing: Pricing | null;
+  diagnostic?: ProviderDiagnostic & { failure: string };
 };
 type Ledger = { total: number; halted: boolean; entries: Entry[] };
 export class BudgetError extends Error {
@@ -263,9 +264,26 @@ export class AIBudget {
       });
     });
     let usage: Usage | null = null;
+    let dispatched: boolean | undefined;
+    let diagnostic: ProviderDiagnostic | undefined;
+    let failure: string | undefined;
     const settle = async (success: boolean, notStarted = false) =>
       this.mutate(ledgerId, (ledger) => {
         const entry = ledger.entries.find((e) => e.id === id)!;
+        if (failure) {
+          entry.diagnostic = {
+            stage: diagnostic?.stage ?? 'preflight',
+            httpStatus: diagnostic?.httpStatus ?? null,
+            errorCode: diagnostic?.errorCode ?? null,
+            errorType: diagnostic?.errorType ?? null,
+            requestId: diagnostic?.requestId ?? null,
+            parameter: diagnostic?.parameter ?? null,
+            timeout: failure === 'timeout' || diagnostic?.timeout === true,
+            networkError: diagnostic?.networkError ?? false,
+            dispatched: dispatched !== false,
+            failure,
+          };
+        }
         // Only our pre-network input bound can prove no paid request was sent.
         // Keep the quota entry, but do not halt all visitors for oversized text.
         if (notStarted && !usage) {
@@ -313,14 +331,36 @@ export class AIBudget {
     try {
       result = await work({
         limits: bounds,
+        reportDispatch: (started) => {
+          dispatched = dispatched === true || started;
+        },
+        reportDiagnostic: (value) => {
+          diagnostic = structuredClone(value);
+        },
         reportUsage: (value) => {
           usage = structuredClone(value);
         },
       });
     } catch (error) {
+      failure = error instanceof AIServiceError ? error.code : 'unavailable';
       await settle(
         false,
-        error instanceof AIServiceError && error.code === 'input_limit',
+        dispatched === false ||
+          (dispatched !== true &&
+            error instanceof AIServiceError &&
+            error.code === 'input_limit'),
+      );
+      // No raw Error, message, headers, image, or user input is logged.
+      console.error(
+        'naenglog.ai.failure',
+        JSON.stringify({
+          entryId: id,
+          feature,
+          failure,
+          dispatched: dispatched !== false,
+          timeout: failure === 'timeout' || diagnostic?.timeout === true,
+          diagnostic,
+        }),
       );
       throw error;
     }

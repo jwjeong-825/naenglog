@@ -12,6 +12,9 @@ export type AnalyzeInput = {
   recognition?: { text: string; purchasedAt?: string; assetId?: string };
 };
 export type RequestOptions = {
+  /** Trusted server adapter callbacks, never populated from HTTP input. */
+  reportDispatch?: (started: boolean) => void;
+  reportDiagnostic?: (diagnostic: ProviderDiagnostic) => void;
   signal: AbortSignal;
   limits?: {
     maxInputTokens: number;
@@ -27,6 +30,25 @@ export type RequestOptions = {
     inputTokens: number;
     outputTokens: number;
   }) => void;
+};
+export type ProviderDiagnostic = {
+  stage:
+    | 'preflight'
+    | 'network'
+    | 'http'
+    | 'json'
+    | 'model'
+    | 'usage'
+    | 'structured_output'
+    | 'domain';
+  httpStatus: number | null;
+  errorCode: string | null;
+  errorType: string | null;
+  requestId: string | null;
+  parameter: string | null;
+  timeout: boolean;
+  networkError: boolean;
+  dispatched: boolean;
 };
 /** Provider implementations return untrusted data; remote activation is server configured. */
 export interface AIProvider {
@@ -78,7 +100,7 @@ export function createAIService(provider: AIProvider, timeoutMs = 5000) {
     let abortHandler: () => void = () => {};
     const cancel = new Promise<never>((_, reject) => {
       abortHandler = () => {
-        controller.abort();
+        controller.abort('cancelled');
         reject(new AIServiceError('cancelled', '요청이 취소되었어요.'));
       };
       if (signal?.aborted) abortHandler();
@@ -86,7 +108,7 @@ export function createAIService(provider: AIProvider, timeoutMs = 5000) {
     });
     const timeout = new Promise<never>((_, reject) => {
       timer = setTimeout(() => {
-        controller.abort();
+        controller.abort('timeout');
         reject(
           new AIServiceError(
             'timeout',

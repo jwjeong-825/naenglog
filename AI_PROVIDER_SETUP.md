@@ -72,3 +72,26 @@ npm run dev
 Network에는 서비스의 /api/ai만 있고 OpenAI 키는 없어야 한다. 내부 비용 상태의 paid 요청 수와 실제 input/output 토큰 증가를 확인한다. 실패 시 키를 공유하지 말고 오류 종류와 설정명만 확인한다. 자동 테스트는 실제 사진 정확도·계정 모델 접근권·실제 지연·실제 청구액을 검증하지 않는다. 이러한 실측 전에는 실제 연결 검증 완료라고 주장하지 않는다.
 
 입력 예산 사전 검사에서 외부 호출 전에 거절한 input_limit만 예약액을 해제한다. 횟수는 유지한다. 실제 요청 실패/timeout/불명확한 usage에는 이 예외를 적용하지 않는다.
+
+## 2026-09-15 · 실패 진단 및 장부 복구 원칙
+
+운영 v4/env revision11의 최초 briefing은 00:12:59 KST 예산 예약 후 usage=null/uncertain으로 실패했다. 약0.3초의 응답은 15초 timeout과 맞지 않지만 인증/프로젝트/모델/HTTP 요청 거절/네트워크 중 어느 것인지는 기존 기록만으로 확정할 수 없다. 당시 원본 HTTP 오류는 폐기되어 소급 복원이 불가능하다. 원인 확정 또는 재발 방지 완료라고 주장하지 않는다.
+
+공식 계약 재점검: gpt-5.4-mini Responses/이미지/structured outputs/none 지원. input_image.image_url 문자열 data URL, detail=high; text.format json_schema/strict/name/schema; 모든 object additionalProperties=false/모든 필드 required; max_output_tokens; reasoning.effort=none; store=false; service_tier=default; tools=[]; usage.input_tokens/output_tokens. 현재 요청에 확인된 계약 위반은 없다. SDK 없이 서버 fetch를 쓰며 retry0 유지.
+참조: https://developers.openai.com/api/docs/models/gpt-5.4-mini , https://developers.openai.com/api/docs/guides/structured-outputs , https://developers.openai.com/api/docs/guides/images-vision , https://developers.openai.com/api/reference/cli/resources/responses/methods/create . 계정 모델 권한과 키 scope는 이 검토로 검증되지 않는다.
+
+새 요청의 실패는 서버 로그 naenglog.ai.failure 및 ai_budget.entries[].diagnostic에 기록한다. stage(preflight/network/http/json/model/usage/structured_output/domain), HTTP status, 허용 목록의 error code/type/param, 정해진 형식의 x-request-id, timeout/network 여부, dispatched 여부만 보존한다. 알 수 없는 code/type/param은 other, 허용 형식이 아닌 request id는 null. 원문 오류 메시지/응답/헤더/API Key/사용자 입력/이미지/stack은 기록하지 않는다. HTTP 오류 본문은 최대16KiB로 읽고 폐기한다. timeout과 사용자 취소를 AbortSignal.reason으로 구분한다. 보호된 비용 조회 API 또는 Sites 운영 DB 읽기에서 장부를 확인할 수 있다.
+
+외부 호출 이전 취소/형식/입력 제한 등 reportDispatch=false로 입증된 실패는 예약만 환원하고 세션 횟수와 이력을 남긴다. fetch 진입 직전에 true를 기록하며 이후 HTTP 4xx라도 usage 불명확이면 예약/전역 차단 유지. 클라이언트는 이 콜백을 지정할 수 없다. 과거 unknown 요청에는 소급 환원하지 않는다.
+
+### 운영 장부 해제 전제 (이번 작업에서는 미실행)
+
+1. 최신 진단 코드 배포와 자동 테스트 완료를 확인한다. 기존 장부 snapshot/revision을 보호된 위치에 백업하고 Provider 사용량/청구를 확인한다. 약12.358원 예약은 실제 청구액으로 확정하지 않는다.
+2. 공개 방문/다른 탭/홈 자동 브리핑으로 추가 요청이 생기지 않도록 테스트 동안 소유자 전용 접근으로 변경할 별도 승인을 받고 기존 탭을 모두 닫는다. 해제는 사용자 별도 승인 후 진행한다.
+3. total/entries/usage/횟수/예약은 보존한다. pending 없음과 검토한 장부 revision 일치를 조건으로 halted만 false로 변경하고 revision을1 증가시키는 CAS를 사용한다. 실패하면 재조회하며 강제 덮어쓰기하지 않는다. 총액0 초기화, 테이블 삭제, Mock 전환으로 paid장부 우회 금지.
+4. 현 Sites 연결 도구의 DB 기능은 읽기 전용이다. 변경은 권한 있는 DB 운영 경로 또는 별도 인증/감사/CAS를 갖춘 복구 기능이 마련된 뒤 수행해야 한다. 현재 공개 무인증 해제 API는 제공하지 않는다. 이 기록 자체가 해제 승인이나 실행은 아니다.
+5. 최초 실패의 근본 원인은 아직 미확정이다. 새 로그 확보 목적의 통제된1회 진단은 원인 해결 완료와 구분하여 별도 승인한다.
+
+### 실제 유료 요청을 정확히1회 시도하는 절차 (아직 실행 금지)
+
+소유자만 접근하도록 승인·전환한 뒤 홈 UI를 열지 않는다(홈은 자동 briefing을 요청함). 사용자 제어 HTTP 클라이언트에서 GET /api/inventory로 앱 세션 쿠키를 받고, 같은 origin/쿠키와 Content-Type: application/json으로 POST /api/ai에 operation=briefing을 한 번만 전송한다. OpenAI 키를 클라이언트에 넣지 않는다. 재시도/리다이렉트/자동 새로고침을 끄고 응답이 불명확해도 재전송하지 않는다. 하나의 앱 요청도 guard/캐시 때문에 외부 호출0회일 수 있으며, 서버 장부의 새 entry와 로그로 외부 요청 시도 수를 확인한다. 새 세션의 빈 재고 브리핑으로 입력·출력을 작게 유지한다. 완료 후 usage/diagnostic과 Provider 비용을 비교하고, 실패면 차단을 다시 해제하지 않는다. 이미지 분석은 이1회에 포함하지 않고 이후 별도 승인한다.

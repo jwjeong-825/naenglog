@@ -83,6 +83,9 @@ export function createAIHandler(
           image,
           input,
           async (extra) => {
+            // The OpenAI adapter marks dispatch immediately before its sole fetch.
+            // Cancellation before createAIService invokes it is also definitely unsent.
+            if (env.AI_PROVIDER === 'openai') extra.reportDispatch?.(false);
             const options = (o: RequestOptions) => ({ ...o, ...extra });
             const guarded: AIProvider = {
               mode: provider.mode,

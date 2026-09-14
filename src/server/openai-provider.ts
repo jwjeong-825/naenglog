@@ -3,6 +3,7 @@ import {
   AIServiceError,
   type AIProvider,
   type RequestOptions,
+  type ProviderDiagnostic,
 } from '../ai-service';
 import { validateAnalysis } from '../analysis';
 import { isRecord, assertCommand } from '../validation';
@@ -86,6 +87,71 @@ const unavailable = () =>
 // Cost bounds have been reviewed for high-detail images on this model family only.
 const modelFamily = 'gpt-5.4-mini';
 const supportedModels = [modelFamily, `${modelFamily}-2026-03-17`];
+// Only protocol identifiers from a closed vocabulary enter diagnostics. Never messages.
+const errorCodes = [
+  'invalid_api_key',
+  'invalid_request_error',
+  'insufficient_quota',
+  'rate_limit_exceeded',
+  'model_not_found',
+  'permission_denied',
+  'invalid_json_schema',
+  'unsupported_parameter',
+  'unsupported_value',
+  'invalid_value',
+  'server_error',
+  'project_spend_limit_exceeded',
+  'authentication_error',
+];
+const errorTypes = [
+  'invalid_request_error',
+  'authentication_error',
+  'permission_error',
+  'rate_limit_error',
+  'server_error',
+  'insufficient_quota',
+];
+const parameters = [
+  'model',
+  'reasoning',
+  'reasoning.effort',
+  'text.format',
+  'text.format.schema',
+  'max_output_tokens',
+  'input',
+  'service_tier',
+  'tools',
+];
+const known = (value: unknown, allowed: string[]) =>
+  typeof value === 'string'
+    ? allowed.includes(value)
+      ? value
+      : 'other'
+    : null;
+async function boundedJSON(response: Response, max: number): Promise<unknown> {
+  const reader = response.body?.getReader();
+  if (!reader) throw bad();
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > max) throw bad();
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const c of chunks) {
+      bytes.set(c, offset);
+      offset += c.length;
+    }
+    return JSON.parse(new TextDecoder().decode(bytes));
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+}
 export function createOpenAIProvider(
   env: { AI_API_KEY?: string; AI_MODEL?: string; AI_PROJECT_ID?: string },
   fetcher: typeof fetch = fetch,
@@ -101,149 +167,200 @@ export function createOpenAIProvider(
     options: RequestOptions,
     image?: { mimeType: string; base64: string },
   ) {
-    const bounds = options.limits;
-    if (
-      !bounds ||
-      !options.reportUsage ||
-      bounds.maxRetries !== 0 ||
-      bounds.maxCalls !== 1
-    )
-      throw unavailable();
-    const content: unknown[] = [
-      { type: 'input_text', text: JSON.stringify(data) },
-    ];
-    if (image) {
-      validateImage(image);
-      if (
-        bounds.maxImages < 1 ||
-        atob(image.base64).length > bounds.maxImageBytes
-      )
-        throw bad();
-      content.push({
-        type: 'input_image',
-        image_url: `data:${image.mimeType};base64,${image.base64}`,
-        detail: 'high',
-      });
-    }
-    const instructions = `${safety}\n${instruction}`;
-    // UTF-8 bytes upper-bound text tokens; include schema, framing and a conservative
-    // high-detail vision allowance (2,500 patches × 1.2 plus framing < 4,096).
-    const inputBound =
-      new TextEncoder().encode(JSON.stringify({ instructions, schema, data }))
-        .length +
-      1024 +
-      (image ? 4096 : 0);
-    if (inputBound > bounds.maxInputTokens)
-      throw new AIServiceError(
-        'input_limit',
-        '한 번에 처리할 내용이 너무 많아요. 식품을 나누어 입력해주세요.',
-      );
-    let response: Response;
+    const diagnostic: ProviderDiagnostic = {
+      stage: 'preflight',
+      httpStatus: null,
+      errorCode: null,
+      errorType: null,
+      requestId: null,
+      parameter: null,
+      timeout: false,
+      networkError: false,
+      dispatched: false,
+    };
+    options.reportDispatch?.(false);
     try {
-      response = await fetcher('https://api.openai.com/v1/responses', {
-        method: 'POST',
-        signal: options.signal,
-        redirect: 'error',
-        headers: {
-          Authorization: `Bearer ${key}`,
-          'Content-Type': 'application/json',
-          ...(env.AI_PROJECT_ID ? { 'OpenAI-Project': env.AI_PROJECT_ID } : {}),
-        },
-        body: JSON.stringify({
-          model,
-          instructions,
-          input: [{ role: 'user', content }],
-          text: {
-            format: {
-              type: 'json_schema',
-              name: 'naenglog_result',
-              strict: true,
-              schema,
-            },
-          },
-          max_output_tokens: bounds.maxOutputTokens,
-          reasoning: { effort: 'none' },
-          store: false,
-          service_tier: 'default',
-          tools: [],
-        }),
-      });
-    } catch {
-      throw unavailable();
-    }
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw unavailable();
-    }
-    let body: unknown;
-    try {
-      const reader = response.body?.getReader();
-      if (!reader) throw bad();
-      const chunks: Uint8Array[] = [];
-      let size = 0;
-      while (true) {
-        const part = await reader.read();
-        if (part.done) break;
-        size += part.value.length;
-        if (size > 128 * 1024) {
-          await reader.cancel();
-          throw bad();
-        }
-        chunks.push(part.value);
-      }
-      const bytes = new Uint8Array(size);
-      let offset = 0;
-      for (const chunk of chunks) {
-        bytes.set(chunk, offset);
-        offset += chunk.length;
-      }
-      body = JSON.parse(new TextDecoder().decode(bytes));
-    } catch {
-      throw bad();
-    }
-    if (
-      !isRecord(body) ||
-      !supportedModels.includes(String(body.model)) ||
-      (model !== modelFamily && body.model !== model)
-    )
-      throw bad();
-    if (
-      !isRecord(body.usage) ||
-      ![body.usage.input_tokens, body.usage.output_tokens].every(
-        (n) => Number.isSafeInteger(n) && Number(n) >= 0,
-      )
-    )
-      throw bad();
-    options.reportUsage!({
-      model: model!,
-      inputTokens: Number(body.usage.input_tokens),
-      outputTokens: Number(body.usage.output_tokens),
-    });
-    if (body.status !== 'completed' || !Array.isArray(body.output)) throw bad();
-    const texts: string[] = [];
-    for (const output of body.output) {
-      if (isRecord(output) && output.type === 'reasoning') continue;
+      if (options.signal.aborted)
+        throw new AIServiceError('cancelled', '요청이 취소되었어요.');
+      const bounds = options.limits;
       if (
-        !isRecord(output) ||
-        output.type !== 'message' ||
-        !Array.isArray(output.content)
+        !bounds ||
+        !options.reportUsage ||
+        bounds.maxRetries !== 0 ||
+        bounds.maxCalls !== 1
       )
-        throw bad();
-      for (const c of output.content) {
+        throw unavailable();
+      const content: unknown[] = [
+        { type: 'input_text', text: JSON.stringify(data) },
+      ];
+      if (image) {
+        validateImage(image);
         if (
-          !isRecord(c) ||
-          c.type !== 'output_text' ||
-          typeof c.text !== 'string'
+          bounds.maxImages < 1 ||
+          atob(image.base64).length > bounds.maxImageBytes
         )
           throw bad();
-        texts.push(c.text);
+        content.push({
+          type: 'input_image',
+          image_url: `data:${image.mimeType};base64,${image.base64}`,
+          detail: 'high',
+        });
       }
-    }
-    if (texts.length !== 1) throw bad();
-    try {
-      return JSON.parse(texts[0]) as unknown;
-    } catch {
-      throw bad();
+      const instructions = `${safety}\n${instruction}`;
+      // UTF-8 bytes upper-bound text tokens; include schema, framing and a conservative
+      // high-detail vision allowance (2,500 patches × 1.2 plus framing < 4,096).
+      const inputBound =
+        new TextEncoder().encode(JSON.stringify({ instructions, schema, data }))
+          .length +
+        1024 +
+        (image ? 4096 : 0);
+      if (inputBound > bounds.maxInputTokens)
+        throw new AIServiceError(
+          'input_limit',
+          '한 번에 처리할 내용이 너무 많아요. 식품을 나누어 입력해주세요.',
+        );
+      let response: Response;
+      // Serialize before marking dispatch: local failures cannot have reached OpenAI.
+      const requestBody = JSON.stringify({
+        model,
+        instructions,
+        input: [{ role: 'user', content }],
+        text: {
+          format: {
+            type: 'json_schema',
+            name: 'naenglog_result',
+            strict: true,
+            schema,
+          },
+        },
+        max_output_tokens: bounds.maxOutputTokens,
+        reasoning: { effort: 'none' },
+        store: false,
+        service_tier: 'default',
+        tools: [],
+      });
+      try {
+        diagnostic.stage = 'network';
+        diagnostic.dispatched = true;
+        options.reportDispatch?.(true);
+        response = await fetcher('https://api.openai.com/v1/responses', {
+          method: 'POST',
+          signal: options.signal,
+          redirect: 'error',
+          headers: {
+            Authorization: `Bearer ${key}`,
+            'Content-Type': 'application/json',
+            ...(env.AI_PROJECT_ID
+              ? { 'OpenAI-Project': env.AI_PROJECT_ID }
+              : {}),
+          },
+          body: requestBody,
+        });
+      } catch {
+        diagnostic.networkError = !options.signal.aborted;
+        throw unavailable();
+      }
+      diagnostic.httpStatus = response.status;
+      const requestId = response.headers.get('x-request-id');
+      diagnostic.requestId =
+        requestId && /^req_[a-f0-9-]{16,80}$/i.test(requestId)
+          ? requestId
+          : null;
+      if (!response.ok) {
+        diagnostic.stage = 'http';
+        try {
+          const errorBody = await boundedJSON(response, 16384);
+          if (isRecord(errorBody) && isRecord(errorBody.error)) {
+            diagnostic.errorCode = known(errorBody.error.code, errorCodes);
+            diagnostic.errorType = known(errorBody.error.type, errorTypes);
+            diagnostic.parameter = known(errorBody.error.param, parameters);
+          }
+        } catch {
+          /* Preserve HTTP status, never log untrusted body or exception. */
+        }
+        throw unavailable();
+      }
+      diagnostic.stage = 'json';
+      let body: unknown;
+      try {
+        const reader = response.body?.getReader();
+        if (!reader) throw bad();
+        const chunks: Uint8Array[] = [];
+        let size = 0;
+        while (true) {
+          const part = await reader.read();
+          if (part.done) break;
+          size += part.value.length;
+          if (size > 128 * 1024) {
+            await reader.cancel();
+            throw bad();
+          }
+          chunks.push(part.value);
+        }
+        const bytes = new Uint8Array(size);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.length;
+        }
+        body = JSON.parse(new TextDecoder().decode(bytes));
+      } catch {
+        throw bad();
+      }
+      diagnostic.stage = 'model';
+      if (
+        !isRecord(body) ||
+        !supportedModels.includes(String(body.model)) ||
+        (model !== modelFamily && body.model !== model)
+      )
+        throw bad();
+      diagnostic.stage = 'usage';
+      if (
+        !isRecord(body.usage) ||
+        ![body.usage.input_tokens, body.usage.output_tokens].every(
+          (n) => Number.isSafeInteger(n) && Number(n) >= 0,
+        )
+      )
+        throw bad();
+      options.reportUsage!({
+        model: model!,
+        inputTokens: Number(body.usage.input_tokens),
+        outputTokens: Number(body.usage.output_tokens),
+      });
+      diagnostic.stage = 'structured_output';
+      if (body.status !== 'completed' || !Array.isArray(body.output))
+        throw bad();
+      const texts: string[] = [];
+      for (const output of body.output) {
+        if (isRecord(output) && output.type === 'reasoning') continue;
+        if (
+          !isRecord(output) ||
+          output.type !== 'message' ||
+          !Array.isArray(output.content)
+        )
+          throw bad();
+        for (const c of output.content) {
+          if (
+            !isRecord(c) ||
+            c.type !== 'output_text' ||
+            typeof c.text !== 'string'
+          )
+            throw bad();
+          texts.push(c.text);
+        }
+      }
+      if (texts.length !== 1) throw bad();
+      try {
+        const decoded: unknown = JSON.parse(texts[0]);
+        diagnostic.stage = 'domain';
+        return decoded;
+      } catch {
+        throw bad();
+      }
+    } finally {
+      diagnostic.timeout =
+        options.signal.aborted && options.signal.reason === 'timeout';
+      options.reportDiagnostic?.(diagnostic);
     }
   }
   const inventory = (state: State) =>

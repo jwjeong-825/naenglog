@@ -68,3 +68,8 @@
 Responses API analyze/interpret/briefing, strict schema 변환, 서버 키/Project 헤더, 단일 fetch/AbortSignal/실제 usage 비용 정산, 불확실 결과 확인 및 명령 사전 검증 추가. Mock 기본 유지. 문서/환경 예시 갱신 및 회귀48개 통과. 실키 및 실제 유료 호출 없음.
 
 - OpenAI 어댑터 cf3d0ac GitHub main/Sites 소스 push 및 Sites 버전4 배포 성공. 소유자 전용 접근과 Mock 기본값 유지, 실제 키·환경변수 변경/유료 호출 없음.
+
+## 2026-09-15 · OpenAI 실패 관측성
+- HTTP status/allowlisted code·type·param/request ID 및 timeout/network/parse 단계 보존. 원문·secret 제외.
+- 전송 이전 확정 실패만 예약 환원, 불확실 usage와 운영 halted장부는 유지.
+- Mock 회귀52개, 복구 및1회 실측 절차 문서화. 실제 유료 호출 없음.

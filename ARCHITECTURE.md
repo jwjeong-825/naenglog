@@ -50,3 +50,6 @@ app/receipt-input.tsx는 두 파일 선택 UI와 하나의 파일 이벤트를 �
 ## OpenAI 어댑터
 
 서버 fetch의 Responses API 요청과 usage 매핑만 경계에 추가했다. API 키는 서버 env→Authorization 헤더, Project ID는 OpenAI-Project 헤더로만 전달한다. 서버가 최소 재고 필드를 제공하고 모델은 DB에 접근하지 않는다. 요청 strict JSON schema는 기존 파일에서 변환하고 기존 검증기가 출력 계약을 확인한다. UTF-8 텍스트+schema+프레이밍+모델 비전 상한을 선검사한다. 예산/캐시/DB migration 변경 없이 actual usage를 reportUsage에 연결했다. 실제 환경 키 없음/유료 호출 없음.
+
+## 2026-09-15 · 실패 관측성
+HTTP/네트워크/파싱/모델/usage/도메인 단계 진단을 서버 로그 및 기존 JSON 장부에 추가했다. 원문/secret은 제외하고 프로토콜 식별자는 allowlist로 제한한다. 요청 전송 시작은 trusted callback으로 단조롭게 false→true만 바뀐다. 미전송 확정 실패만 예약 환원하며 모호한 실패는 기존 전역 차단 유지. migration/운영 장부 변경 없음.

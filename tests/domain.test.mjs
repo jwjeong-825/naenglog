@@ -1412,3 +1412,154 @@ test('OpenAI oversized preflight releases only unsent reservation without disabl
     sql.close();
   }
 });
+
+test('OpenAI diagnostics preserve only allowlisted protocol metadata', async () => {
+  let diagnostic;
+  const p = createOpenAIProvider(openEnv(), async () =>
+    Response.json(
+      {
+        error: {
+          code: 'invalid_json_schema',
+          type: 'invalid_request_error',
+          param: 'text.format.schema',
+          message:
+            'PRIVATE_INPUT test-only-placeholder data:image/png;base64,secret',
+        },
+      },
+      { status: 400, headers: { 'x-request-id': 'req_0123456789abcdef' } },
+    ),
+  );
+  await assert.rejects(
+    p.briefing(d.seed(), {
+      ...openOptions('briefing'),
+      reportDiagnostic: (x) => (diagnostic = x),
+    }),
+  );
+  assert.equal(diagnostic.stage, 'http');
+  assert.equal(diagnostic.httpStatus, 400);
+  assert.equal(diagnostic.errorCode, 'invalid_json_schema');
+  assert.equal(diagnostic.parameter, 'text.format.schema');
+  assert.equal(diagnostic.requestId, 'req_0123456789abcdef');
+  assert.ok(!JSON.stringify(diagnostic).includes('PRIVATE_INPUT'));
+  assert.ok(!JSON.stringify(diagnostic).includes('placeholder'));
+  const poisoned = createOpenAIProvider(openEnv(), async () =>
+    Response.json(
+      {
+        error: {
+          code: 'PRIVATE_INPUT',
+          type: 'test-only-placeholder',
+          param: 'data:image/png;base64,secret',
+        },
+      },
+      { status: 401, headers: { 'x-request-id': 'test-only-placeholder' } },
+    ),
+  );
+  await assert.rejects(
+    poisoned.briefing(d.seed(), {
+      ...openOptions('briefing'),
+      reportDiagnostic: (x) => (diagnostic = x),
+    }),
+  );
+  assert.equal(diagnostic.errorCode, 'other');
+  assert.equal(diagnostic.errorType, 'other');
+  assert.equal(diagnostic.requestId, null);
+});
+
+test('OpenAI failure stages distinguish network, JSON, model, usage and structured output', async () => {
+  for (const [stage, fetcher] of [
+    [
+      'network',
+      async () => {
+        throw Error('PRIVATE_INPUT');
+      },
+    ],
+    ['json', async () => new Response('not json')],
+    ['model', async () => openResponse({}, { model: 'wrong-model' })],
+    ['usage', async () => openResponse({}, { usage: null })],
+    [
+      'structured_output',
+      async () => openResponse({}, { status: 'incomplete' }),
+    ],
+  ]) {
+    let diagnostic;
+    const p = createOpenAIProvider(openEnv(), fetcher);
+    await assert.rejects(
+      p.briefing(d.seed(), {
+        ...openOptions('briefing'),
+        reportDiagnostic: (x) => (diagnostic = x),
+      }),
+    );
+    assert.equal(diagnostic.stage, stage);
+    assert.equal(diagnostic.networkError, stage === 'network');
+    assert.equal(diagnostic.dispatched, true);
+  }
+});
+
+test('Definite preflight cancellation releases reservation; dispatched failures remain halted', async () => {
+  for (const preflight of [true, false]) {
+    const { db, sql } = makeRepository();
+    let calls = 0;
+    const p = createOpenAIProvider(openEnv(), async () => {
+      calls++;
+      throw Error('PRIVATE_INPUT');
+    });
+    const controller = new AbortController();
+    if (preflight) controller.abort('cancelled');
+    try {
+      const budget = new AIBudget(db, openEnv());
+      await assert.rejects(
+        budget.run('diagnostic', 'briefing', true, false, {}, (o) =>
+          p.briefing(d.seed(), { ...o, signal: controller.signal }),
+        ),
+      );
+      const s = await budget.summary();
+      assert.equal(calls, preflight ? 0 : 1);
+      assert.equal(s.level, preflight ? 'normal' : 'blocked');
+      assert.equal(s.estimatedKrw === 0, preflight);
+      assert.equal(s.requests, 1);
+      assert.equal(s.recent[0].diagnostic.dispatched, !preflight);
+      assert.ok(
+        !JSON.stringify(s.recent[0].diagnostic).includes('PRIVATE_INPUT'),
+      );
+    } finally {
+      sql.close();
+    }
+  }
+});
+
+test('Budget persists timeout diagnostics without resetting uncertain costs', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const budget = new AIBudget(db, openEnv());
+    const p = createOpenAIProvider(
+      openEnv(),
+      async (_url, init) =>
+        new Promise((_resolve, reject) =>
+          init.signal.addEventListener(
+            'abort',
+            () => reject(Error('PRIVATE_INPUT')),
+            { once: true },
+          ),
+        ),
+    );
+    await assert.rejects(
+      budget.run('timeout', 'briefing', true, false, {}, (extra) =>
+        createAIService(
+          {
+            ...p,
+            briefing: (s, o) => p.briefing(s, { ...o, ...extra }),
+          },
+          20,
+        ).briefing(d.seed()),
+      ),
+      (e) => e.code === 'timeout',
+    );
+    const s = await budget.summary();
+    assert.equal(s.level, 'blocked');
+    assert.equal(s.recent[0].diagnostic.timeout, true);
+    assert.equal(s.recent[0].diagnostic.dispatched, true);
+    assert.ok(s.estimatedKrw > 0);
+  } finally {
+    sql.close();
+  }
+});

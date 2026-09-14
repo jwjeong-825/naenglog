@@ -133,3 +133,8 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 ## OpenAI 어댑터 배포 완료 · 2026-09-14
 
 기능 커밋 cf3d0acff8b7a88ea66742865c8edaae7f85cca2를 공식 GitHub main과 Sites 소스에 push 완료. 동시 README 수정은 보존해 rebase했다. Sites 버전4 배포 succeeded(deployment appgdep_6aa753d9f5e8819187f51585522b7e1f), URL https://naenglog-fridge.vk4yrj847p.chatgpt.site . 소유자 전용 접근 유지, env_set_revision=0, 키/환경변수 변경 없음. 기본 Mock 상태이며 실제 OpenAI 활성화·과금·인식 정확도 검증은 미실행. 다음 우선순위는 사용자 전용 Project/한도/Secret 설정 후 소량 실측이다.
+
+## 최신 체크포인트 · 2026-09-15 오류 진단
+운영 v4/env11은 가격 guard 통과 후 최초 briefing 실패(usage=null), paid 장부 halted=true. 진단 필드가 없어 과거503 원인은 미확정. 새 진단 보존/미전송 예약 처리 구현, 52개 Mock 테스트 통과, typecheck 통과, lint/build 최종 확인 진행. 운영 장부/키 변경과 실제 모델 호출은 금지. 다음: 검증 완료→commit/push 및 코드 배포(장부 유지)→사용자 승인하에 Provider 청구 검토/복구 경로 확보→통제된 단1회 진단. 실패 재현·원인 확정 전 해결 완료라고 말하지 않는다.
+
+최종 검증: npm test 52/52, npm run typecheck/lint/build 모두 exit0. 실제 유료 호출0, 운영 장부 변경0. 진단 어댑터 코드를 기록/배포하며 기존 halted는 유지한다.

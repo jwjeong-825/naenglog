@@ -57,3 +57,6 @@ Sites 버전3 배포 상태 succeeded 확인(2026-09-14). 배포 소스 aabc4a89
 ## OpenAI adapter 검증
 
 기존37+신규11=48개 테스트 통과. 실제 네트워크 호출 없이 Responses/3분류/낮은 신뢰도/JSON·schema 오류/거절·incomplete/키·모델 누락/단일 호출/timeout abort/명령 모호성·초과량/브리핑/예산 선검사·실제 usage형식·캐시/미전송 입력 예약 해제를 확인했다. typecheck/lint/build 통과, client 번들에 서버 설정명/외부 endpoint/테스트 키 표식0건. 실제 계정/청구/영수증 품질은 미검증이다. 어댑터 소스 cf3d0ac를 포함한 Sites 버전4 배포 succeeded를 확인했다. env_set_revision=0과 소유자 전용 접근 유지, 키 설정/실제 호출 없음. 운영 URL을 통한 실제 AI 검증은 수행하지 않았다.
+
+## 2026-09-15 안전한 실패 진단
+52개 Mock 테스트/타입/lint/최종 build 통과. HTTP 메타데이터 허용 목록과 민감 원문 제외, network/JSON/model/usage/structured output 단계, 사전 취소 비용 환원과 전송후 timeout 차단 검증. 실제 API 호출과 장부 해제 없음.
