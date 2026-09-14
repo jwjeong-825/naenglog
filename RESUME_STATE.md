@@ -126,6 +126,10 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 ## 최신 체크포인트 · OpenAI 어댑터
 
-사용자가 실제 OpenAI 어댑터 구현을 승인했다. 키 입력/발급/결제/실제 호출은 사용자 직접 수행. src/server/openai-provider.ts와 selectProvider에 openai 모드를 구현하고 구매 기록 remote 매핑, 브리핑 메뉴 표시/이미지 외부 전송 안내를 연결했다. 기존 경계/예산/DB/확인 흐름 유지. 48개(기존37+신규11) 테스트와 build 통과. 자동 테스트는 fetch 대역만 사용. 키/계정 환경은 읽거나 변경하지 않았다. 최신 운영은 UI 배포버전3이며 이번 어댑터 운영 배포/활성화는 사용자 설정 단계에서 진행한다. 다음: 최종 타입/lint·클라이언트 secret 경계·diff 확인 후 공식main commit/push. 이후 AI_PROVIDER_SETUP의 설정/실제3~5품목 검증을 사용자가 수행한다.
+사용자가 실제 OpenAI 어댑터 구현을 승인했다. 키 입력/발급/결제/실제 호출은 사용자 직접 수행. src/server/openai-provider.ts와 selectProvider에 openai 모드를 구현하고 구매 기록 remote 매핑, 브리핑 메뉴 표시/이미지 외부 전송 안내를 연결했다. 기존 경계/예산/DB/확인 흐름 유지. 48개(기존37+신규11) 테스트와 build 통과. 자동 테스트는 fetch 대역만 사용. 키/계정 환경은 읽거나 변경하지 않았다. 어댑터는 Sites 버전4로 배포 완료했으며 실제 활성화는 사용자 설정 단계에 남긴다. 최종 검증과 공식 main push 완료. 이후 AI_PROVIDER_SETUP의 설정/실제3~5품목 검증을 사용자가 수행한다.
 
 최종 검증 확정: 테스트48/48, typecheck/lint/build exit0. 클라이언트 번들 서버 키/요금/엔드포인트 표식0건, 변경 대상 민감정보 패턴0건, diff 검사 통과. 새 DB migration/의존성 변경 없음. 외부 미호출 input_limit의 예약만 해제하고 횟수는 유지하도록 보완했다. 공식 GitHub main에 이 기능 단위를 기록하며 실제키·운영환경·실제영수증 검증은 사용자 설정 단계에 남긴다.
+
+## OpenAI 어댑터 배포 완료 · 2026-09-14
+
+기능 커밋 cf3d0acff8b7a88ea66742865c8edaae7f85cca2를 공식 GitHub main과 Sites 소스에 push 완료. 동시 README 수정은 보존해 rebase했다. Sites 버전4 배포 succeeded(deployment appgdep_6aa753d9f5e8819187f51585522b7e1f), URL https://naenglog-fridge.vk4yrj847p.chatgpt.site . 소유자 전용 접근 유지, env_set_revision=0, 키/환경변수 변경 없음. 기본 Mock 상태이며 실제 OpenAI 활성화·과금·인식 정확도 검증은 미실행. 다음 우선순위는 사용자 전용 Project/한도/Secret 설정 후 소량 실측이다.
