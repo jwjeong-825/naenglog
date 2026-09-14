@@ -138,3 +138,5 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 운영 v4/env11은 가격 guard 통과 후 최초 briefing 실패(usage=null), paid 장부 halted=true. 진단 필드가 없어 과거503 원인은 미확정. 새 진단 보존/미전송 예약 처리 구현, 52개 Mock 테스트 통과, typecheck 통과, lint/build 최종 확인 진행. 운영 장부/키 변경과 실제 모델 호출은 금지. 다음: 검증 완료→commit/push 및 코드 배포(장부 유지)→사용자 승인하에 Provider 청구 검토/복구 경로 확보→통제된 단1회 진단. 실패 재현·원인 확정 전 해결 완료라고 말하지 않는다.
 
 최종 검증: npm test 52/52, npm run typecheck/lint/build 모두 exit0. 실제 유료 호출0, 운영 장부 변경0. 진단 어댑터 코드를 기록/배포하며 기존 halted는 유지한다.
+
+배포 완료: 진단 코드80ec6eb6b78e261b3835c161ffb650fee2b45e99를 GitHub main/Sites 소스에 push. Sites 버전5/env revision11 succeeded(appgdep_6aa8143b7a4c819198b9873dc8cd8ad3). 기존 공개 접근 유지. 배포 후 DB 읽기로 paid장부 revision2/halted=true/total12358(0.001원 단위)/entry1 불변 확인. 실제 AI 호출 없음. 다음은 Provider 청구 검토와 별도 승인된 복구 경로/단1회 실측. 현재 오류 원인은 미확정이며 새 요청부터 진단 가능.
