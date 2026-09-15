@@ -59,6 +59,7 @@ import {
   type Storage,
 } from '../src/domain';
 import { loadRemote, mutateRemote, ApiError, type Mutation } from '../src/api';
+const HOME_ITEM_PREVIEW_LIMIT = 5;
 const actionNames = {
   purchase: '구매 등록',
   consume: '소비',
@@ -532,7 +533,7 @@ export default function Home() {
                   </div>
                   <div className="food-list">
                     {list.length ? (
-                      list.slice(0, 5).map((i) => card(i))
+                      list.slice(0, HOME_ITEM_PREVIEW_LIMIT).map((i) => card(i))
                     ) : (
                       <Blank text="영수증이나 직접 입력으로 첫 식품을 추가해 보세요." />
                     )}

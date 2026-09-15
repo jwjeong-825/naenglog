@@ -13,6 +13,7 @@ const reviewReason =
   '분석 결과에서 확정하기 어려운 정보가 있어 이름·수량·단위를 직접 확인해주세요.';
 const incompleteEvidence =
   'AI 분석 결과의 근거가 불완전하여 사용자 확인이 필요합니다.';
+const MAX_RESOLUTION_EVIDENCE = 5;
 const storageValues: Storage[] = ['냉장', '냉동', '실온'];
 const units = new Map<string, string>([
   ['개', '개'],
@@ -418,7 +419,7 @@ const normalizeRow = (
       resolution.evidence = [
         '상품명에 식품 종류가 명확히 표시되어 있습니다.',
         ...resolution.evidence,
-      ].slice(0, 5);
+      ].slice(0, MAX_RESOLUTION_EVIDENCE);
   }
   const reasons = normalizeStrings(meaning.reasons, 5, 300);
   const weightPerUnit = meaning.weightPerUnit;
