@@ -1,7 +1,7 @@
 'use client';
 import { CONFIDENCE_THRESHOLDS } from '../src/receipt-resolution';
 import type { Draft } from '../src/domain';
-import type { ProductMeaning } from '../src/product';
+import { managementNeed, type ProductMeaning } from '../src/product';
 export function ProductReview({
   draft,
   onChange,
@@ -16,6 +16,11 @@ export function ProductReview({
   return (
     <div className="product-review">
       <p className="product-origin">원본 · {draft.productName}</p>
+      {managementNeed(draft) === 'low' && (
+        <p className="management-hint">
+          장기 재고 관리가 필요하지 않다면 제외해도 괜찮아요.
+        </p>
+      )}
       <details>
         <summary>상품 정보 자세히 보기</summary>
         <p>

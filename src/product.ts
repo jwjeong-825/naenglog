@@ -3,6 +3,7 @@ import { foods, today, type Draft, type Storage } from './domain';
 export type ProductMeaning = {
   version: 1;
   resolution?: Resolution;
+  /** Canonical food identity, independent from the receipt and display labels. */
   normalizedFoodName: string;
   brand: string | null;
   weightPerUnit: number | null;
@@ -16,6 +17,12 @@ export type ProductMeaning = {
   reasons: string[];
   confirmed: boolean;
 };
+export type ManagementNeed = 'high' | 'low';
+/** UI-only guidance; low-need foods remain eligible for registration. */
+export function managementNeed(draft: Draft): ManagementNeed {
+  const foodName = draft.meaning?.normalizedFoodName ?? '';
+  return /라면|건면|과자|통조림|즉석밥/.test(foodName) ? 'low' : 'high';
+}
 /** Deterministic demonstration of semantic interpretation, never image recognition. */
 export function interpretProduct(line: string): Draft {
   const productName = line.trim();

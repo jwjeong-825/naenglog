@@ -4,7 +4,9 @@ export type Storage = '냉장' | '냉동' | '실온';
 export type Draft = {
   meaning?: ProductMeaning;
   expiryDate?: string;
+  /** User-facing inventory label; it may retain useful brand/product wording. */
   name: string;
+  /** Original receipt line/product label exactly as supplied by recognition. */
   productName: string;
   quantity: number;
   unit: string;

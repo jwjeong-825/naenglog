@@ -6,24 +6,14 @@ import {
   type RequestOptions,
   type ProviderDiagnostic,
 } from '../ai-service';
-import { validateAnalysis } from '../analysis';
+import { AnalysisValidationError, validateAnalysis } from '../analysis';
+import { normalizeAnalysisResult } from '../analysis-normalization';
 import { isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
-import type { PendingProduct } from '../receipt-resolution';
 
 type Schema = Record<string, unknown>;
 type DomainReason = NonNullable<ProviderDiagnostic['reasonCode']>;
-const unresolvedFromLowConfidence = (
-  row: ReturnType<typeof validateAnalysis>['rows'][number],
-): PendingProduct => ({
-  productName: row.productName,
-  reason: '상품명·수량을 직접 확인해주세요.',
-  resolution: {
-    ...row.meaning!.resolution!,
-    classification: 'UNCERTAIN',
-  },
-});
 /** Strict transport schema only; the domain schema remains authoritative. */
 export function strictSchema(value: Schema): Schema {
   const result: Schema = {};
@@ -387,92 +377,37 @@ export function createOpenAIProvider(
   return {
     mode: 'remote',
     async analyze(input, options) {
+      const suppliedToday = today();
       return request(
         openAIAnalysisSchema,
-        `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim; normalize name and meaning.normalizedFoodName to the real food, not a code. Examples: 서울우1L may mean 우유; 하림블랙100X5 needs chicken context, otherwise unresolved. Keep salads, meal kits, lunch boxes as whole products, never split ingredients. Prices are never quantities. Unknown brand/weight/packaging/processed/openingSensitive must be null. Missing quantity or ambiguous identity goes unresolved with up to 3 candidates and evidence. Never invent expiryDate; use null unless explicitly printed. If purchase date absent, use supplied today and add a warning requiring confirmation. Weights must match quantity. resolution.method must be direct_ai, with evidence, score and matching classification. Low confidence or score below 0.7 must be unresolved. confirmed is false. No non-food is discarded. No OCR confidence claims without evidence. Return at most 5 food rows; additional visible products must remain unresolved and add a warning.`,
+        `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim. name is a natural user-facing product name including a clear brand and product identity; never replace it with the generic normalized food type. meaning.normalizedFoodName is only the canonical food type. Brand plus an explicit food word is high-confidence FOOD: 서울우유 1L -> name 서울우유, normalizedFoodName 우유; 청정원 진간장 500ml -> name 청정원 진간장, normalizedFoodName 간장; 신라면 5입 -> name 신라면, normalizedFoodName 라면; 무항생제 계란 10구 -> name 무항생제 계란, normalizedFoodName 계란, quantity 10, unit 개. Parse egg 10구/15구/30구 as 10개/15개/30개 for inventory. Parse N입, N개입, N팩, N봉, N병 and N캔 as package quantity; 500ml, 1L and 200g are weight/volume, never quantity. Use unresolved only when the food identity cannot answer what food should enter inventory, such as 서울1000, 참P500, product codes or broken OCR. Explicit non-food such as 키친타월, 휴지, 섬유탈취제, 세제, 샴푸, 린스, 화장지 or 건전지 goes to excluded. Keep salads, meal kits and lunch boxes whole. Prices are never quantities. Unknown weight/packaging details must be null. Never invent expiryDate; use null unless explicitly printed. If purchase date is absent, use supplied today and warn. resolution.method is direct_ai with evidence, score and matching classification. Explicit food identity should receive high confidence and score at least 0.7; low confidence or score below 0.7 is only for genuinely ambiguous identity. confirmed is always false. Return every clearly identified food as a row, up to the schema safety limit of 50. Never move a product to unresolved merely because of its position or the number of food products.`,
         {
           source: input.source,
           text: input.text ?? input.recognition?.text ?? '',
-          today: today(),
+          today: suppliedToday,
         },
         options,
         input.image,
         (raw, diagnostic) => {
-          let reason: DomainReason = 'domain_validation_failed';
           const fail = (code: DomainReason): never => {
             diagnostic.reasonCode = code;
             throw bad();
           };
-          const analysisRaw = isRecord(raw)
-            ? raw
-            : fail('domain_validation_failed');
-          const rows = Array.isArray(analysisRaw.rows)
-            ? analysisRaw.rows
-            : fail('invalid_row_shape');
-          const unresolved = Array.isArray(analysisRaw.unresolved)
-            ? analysisRaw.unresolved
-            : fail('invalid_unresolved_shape');
-          if (analysisRaw.excluded === null) delete analysisRaw.excluded;
-          for (const row of rows) {
-            if (!isRecord(row)) fail('invalid_row_shape');
-            if (!isRecord(row.meaning)) fail('invalid_meaning');
-            if (row.expiryDate === null) delete row.expiryDate;
-          }
-          for (const entry of [
-            ...rows.map((row) => (row as Record<string, unknown>).meaning),
-            ...unresolved,
-            ...(Array.isArray(analysisRaw.excluded)
-              ? analysisRaw.excluded
-              : []),
-          ]) {
-            if (!isRecord(entry)) fail('invalid_unresolved_shape');
-            if (!isRecord(entry.resolution)) fail('missing_resolution_method');
-            if (entry.resolution.method !== 'direct_ai')
-              fail('invalid_resolution_method');
-            if (
-              !['FOOD', 'NON_FOOD', 'UNCERTAIN'].includes(
-                String(entry.resolution.classification),
-              )
-            )
-              fail('invalid_classification');
-            if (
-              !Number.isFinite(entry.resolution.score) ||
-              Number(entry.resolution.score) < 0 ||
-              Number(entry.resolution.score) > 1
-            )
-              fail('invalid_confidence_or_score');
-          }
-          const result = (() => {
+          const normalized = (() => {
             try {
-              return validateAnalysis(analysisRaw);
+              return normalizeAnalysisResult(raw, suppliedToday);
             } catch {
-              return fail(reason);
+              return fail('domain_validation_failed');
             }
           })();
-          for (const row of result.rows) {
-            const m = row.meaning!;
-            if (!['high', 'low'].includes(m.confidence))
-              fail('invalid_confidence_or_score');
-            if (m.resolution!.classification !== 'FOOD')
-              fail('invalid_classification');
-            if (m.confidence === 'low' || m.resolution!.score < 0.7)
-              result.unresolved.push(unresolvedFromLowConfidence(row));
-          }
-          result.rows = result.rows.filter(
-            (r) =>
-              r.meaning!.confidence !== 'low' &&
-              r.meaning!.resolution!.score >= 0.7,
-          );
-          if (
-            result.unresolved.some(
-              (r) => r.resolution?.classification !== 'UNCERTAIN',
-            )
-          )
-            fail('invalid_classification');
           try {
-            return validateAnalysis(result);
-          } catch {
-            fail('post_validation_rule_failed');
+            return validateAnalysis(normalized);
+          } catch (error) {
+            fail(
+              error instanceof AnalysisValidationError
+                ? error.reasonCode
+                : 'post_validation_rule_failed',
+            );
           }
         },
       );

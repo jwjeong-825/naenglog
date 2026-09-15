@@ -4,7 +4,32 @@ import {
   type ExcludedProduct,
 } from './receipt-resolution';
 import type { Draft } from './domain';
-import { assertDraft, isRecord } from './validation';
+import { assertDraft, DraftValidationError, isRecord } from './validation';
+export type AnalysisValidationReason =
+  | 'invalid_analysis_envelope'
+  | 'invalid_warning_or_notice'
+  | 'invalid_product_notice'
+  | 'invalid_draft_basic_fields'
+  | 'invalid_quantity'
+  | 'invalid_purchase_date'
+  | 'invalid_expiry_date'
+  | 'invalid_storage'
+  | 'invalid_product_meaning'
+  | 'normalized_food_name_mismatch'
+  | 'invalid_weight_fields'
+  | 'invalid_total_weight'
+  | 'invalid_resolution'
+  | 'invalid_analysis_fields'
+  | 'empty_analysis';
+export class AnalysisValidationError extends Error {
+  constructor(public readonly reasonCode: AnalysisValidationReason) {
+    super(reasonCode);
+    this.name = 'AnalysisValidationError';
+  }
+}
+const fail = (reasonCode: AnalysisValidationReason): never => {
+  throw new AnalysisValidationError(reasonCode);
+};
 export type AnalysisResult = {
   version: 1;
   rows: Draft[];
@@ -25,42 +50,61 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
     !Array.isArray(raw.warnings) ||
     raw.warnings.length > 10
   )
-    throw new Error('Invalid analysis envelope');
+    fail('invalid_analysis_envelope');
+  const analysis = raw as Record<string, unknown> & {
+    rows: unknown[];
+    unresolved: unknown[];
+    warnings: unknown[];
+    excluded?: unknown[];
+  };
   const short = (v: unknown, max: number) =>
     typeof v === 'string' && v.trim().length > 0 && v.length <= max;
-  if (!keys(raw, ['version', 'rows', 'unresolved', 'warnings', 'excluded']))
-    throw new Error('Unknown analysis fields');
   if (
-    !raw.warnings.every((v) => short(v, 300)) ||
-    !raw.unresolved.every(
+    !keys(analysis, ['version', 'rows', 'unresolved', 'warnings', 'excluded'])
+  )
+    fail('invalid_analysis_fields');
+  if (
+    !analysis.warnings.every((v) => short(v, 300)) ||
+    !analysis.unresolved.every(
       (v) => isRecord(v) && short(v.productName, 120) && short(v.reason, 300),
     )
   )
-    throw new Error('Invalid analysis notices');
+    fail('invalid_warning_or_notice');
   if (
-    raw.excluded !== undefined &&
-    (!Array.isArray(raw.excluded) || raw.excluded.length > 50)
+    analysis.excluded !== undefined &&
+    (!Array.isArray(analysis.excluded) || analysis.excluded.length > 50)
   )
-    throw new Error('Invalid excluded products');
-  for (const item of [
-    ...raw.unresolved,
-    ...((raw.excluded as unknown[]) ?? []),
-  ]) {
+    fail('invalid_product_notice');
+  for (const item of [...analysis.unresolved, ...(analysis.excluded ?? [])]) {
     if (
       !isRecord(item) ||
       !short(item.productName, 120) ||
       !short(item.reason, 300) ||
       !keys(item, ['productName', 'reason', 'resolution'])
     )
-      throw new Error('Invalid product notice');
-    if (item.resolution !== undefined) assertResolution(item.resolution);
+      fail('invalid_product_notice');
+    const notice = item as Record<string, unknown>;
+    if (notice.resolution !== undefined) {
+      try {
+        assertResolution(notice.resolution);
+      } catch {
+        fail('invalid_resolution');
+      }
+    }
   }
-  for (const item of (raw.excluded as ExcludedProduct[]) ?? [])
+  for (const item of (analysis.excluded as ExcludedProduct[]) ?? [])
     if (!item.resolution || item.resolution.classification !== 'NON_FOOD')
-      throw new Error('Invalid exclusion');
-  raw.rows.forEach((v) => {
-    assertDraft(v);
-    if (!v.meaning) throw new Error('Missing product meaning');
+      fail('invalid_resolution');
+  analysis.rows.forEach((value) => {
+    try {
+      assertDraft(value);
+    } catch (error) {
+      if (error instanceof DraftValidationError) fail(error.reasonCode);
+      throw error;
+    }
+    const v = value;
+    if (!v.meaning) fail('invalid_product_meaning');
+    const meaning = v.meaning!;
     if (
       !keys(v, [
         'name',
@@ -73,7 +117,7 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
         'meaning',
         'expiryDate',
       ]) ||
-      !keys(v.meaning, [
+      !keys(meaning, [
         'version',
         'resolution',
         'normalizedFoodName',
@@ -90,23 +134,23 @@ export function validateAnalysis(raw: unknown): AnalysisResult {
         'confirmed',
       ])
     )
-      throw new Error('Unknown product fields');
+      fail('invalid_analysis_fields');
     if (
-      v.meaning.weightPerUnit !== null &&
-      v.meaning.totalWeight !==
-        Math.round(v.meaning.weightPerUnit * v.quantity * 1000) / 1000
+      meaning.weightPerUnit !== null &&
+      meaning.totalWeight !==
+        Math.round(meaning.weightPerUnit * v.quantity * 1000) / 1000
     )
-      throw new Error('Invalid total weight');
+      fail('invalid_total_weight');
   });
   if (
-    !raw.rows.length &&
-    !raw.unresolved.length &&
-    !(raw.excluded as unknown[] | undefined)?.length
+    !analysis.rows.length &&
+    !analysis.unresolved.length &&
+    !analysis.excluded?.length
   )
-    throw new Error('Empty analysis');
+    fail('empty_analysis');
   return {
-    ...(structuredClone(raw) as AnalysisResult),
-    rows: raw.rows.map((v) => ({
+    ...(structuredClone(analysis) as AnalysisResult),
+    rows: (analysis.rows as Draft[]).map((v) => ({
       ...v,
       meaning: { ...v.meaning!, confirmed: false },
     })),

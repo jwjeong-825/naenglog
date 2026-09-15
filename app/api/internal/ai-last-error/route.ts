@@ -1,4 +1,5 @@
 import { env } from 'cloudflare:workers';
+import { isRecord } from '../../../../src/validation';
 
 export async function GET() {
   const bindings = env as unknown as { DB: D1Database };
@@ -20,7 +21,7 @@ export async function GET() {
     );
   }
 
-  let ledger: any;
+  let ledger: unknown;
   try {
     ledger = JSON.parse(row.snapshot);
   } catch {
@@ -35,24 +36,26 @@ export async function GET() {
     );
   }
 
-  const entries = Array.isArray(ledger?.entries) ? ledger.entries : [];
+  const entries =
+    isRecord(ledger) && Array.isArray(ledger.entries) ? ledger.entries : [];
 
   // We are debugging receipt/image analysis specifically. Background briefing failures
   // can be newer and would otherwise hide the relevant analyze diagnostic.
   const latest = [...entries]
     .reverse()
     .find(
-      (entry: any) =>
-        entry?.feature === 'analyze' &&
-        entry?.image === true &&
-        (entry?.status === 'uncertain' || entry?.diagnostic),
+      (entry) =>
+        isRecord(entry) &&
+        entry.feature === 'analyze' &&
+        entry.image === true &&
+        (entry.status === 'uncertain' || isRecord(entry.diagnostic)),
     );
 
   if (!latest) {
     return Response.json(
       {
         found: false,
-        halted: ledger?.halted === true,
+        halted: isRecord(ledger) && ledger.halted === true,
         revision: row.revision,
       },
       {
@@ -64,26 +67,18 @@ export async function GET() {
     );
   }
 
-  const d = latest.diagnostic ?? {};
-  const inferredReasonCode =
-    typeof d.reasonCode === 'string'
-      ? d.reasonCode
-      : d.stage === 'domain' && d.failure === 'invalid_response'
-        ? 'post_validation_rule_failed'
-        : null;
-
+  const d = isRecord(latest.diagnostic) ? latest.diagnostic : {};
   return Response.json(
     {
       found: true,
-      halted: ledger?.halted === true,
+      halted: isRecord(ledger) && ledger.halted === true,
       revision: row.revision,
       feature: latest.feature ?? null,
       image: latest.image === true,
       status: latest.status ?? null,
       failure: typeof d.failure === 'string' ? d.failure : null,
-      reasonCode: inferredReasonCode,
-      reasonCodeInferred:
-        typeof d.reasonCode !== 'string' && inferredReasonCode !== null,
+      reasonCode: typeof d.reasonCode === 'string' ? d.reasonCode : null,
+      reasonCodeInferred: false,
       stage: typeof d.stage === 'string' ? d.stage : null,
       httpStatus: Number.isInteger(d.httpStatus) ? d.httpStatus : null,
       errorCode: typeof d.errorCode === 'string' ? d.errorCode : null,
@@ -95,15 +90,17 @@ export async function GET() {
         typeof d.networkCategory === 'string' ? d.networkCategory : null,
       dispatched: d.dispatched === true,
       usageKnown:
-        !!latest.usage &&
+        isRecord(latest.usage) &&
         Number.isInteger(latest.usage.inputTokens) &&
         Number.isInteger(latest.usage.outputTokens),
-      inputTokens: Number.isInteger(latest.usage?.inputTokens)
-        ? latest.usage.inputTokens
-        : null,
-      outputTokens: Number.isInteger(latest.usage?.outputTokens)
-        ? latest.usage.outputTokens
-        : null,
+      inputTokens:
+        isRecord(latest.usage) && Number.isInteger(latest.usage.inputTokens)
+          ? latest.usage.inputTokens
+          : null,
+      outputTokens:
+        isRecord(latest.usage) && Number.isInteger(latest.usage.outputTokens)
+          ? latest.usage.outputTokens
+          : null,
     },
     {
       headers: {

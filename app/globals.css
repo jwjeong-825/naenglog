@@ -816,6 +816,16 @@ label [data-slot='select-trigger'] {
   font-size: 13px !important;
   color: var(--muted-foreground);
 }
+.management-hint,
+.review-guidance {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
 .product-confirm {
   flex-direction: row;
   align-items: flex-start;
@@ -858,20 +868,6 @@ label [data-slot='select-trigger'] {
 .uncertain-item {
   padding: 20px 0;
   border-bottom: 1px solid var(--border);
-}
-.excluded-products {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-}
-.excluded-products summary {
-  cursor: pointer;
-  min-height: 44px;
-  padding: 8px 0;
-  font-size: 14px;
-}
-.excluded-products p {
-  font-size: 14px;
-  color: var(--muted-foreground);
 }
 .receipt-classification h2 {
   margin: 24px 0 6px;
