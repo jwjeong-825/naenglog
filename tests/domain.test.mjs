@@ -18,6 +18,7 @@ for (const name of [
   'analysis',
   'analysis-normalization',
   'receipt-resolution',
+  'review-confirmation',
   'server/ai-budget',
   'server/ai-budget-admin',
   'image-input',
@@ -58,6 +59,32 @@ const { ai, buildMockBriefing } = await import(
   pathToFileURL(path.join(out, 'ai.mjs'))
 );
 const storage = await import(pathToFileURL(path.join(out, 'storage.mjs')));
+const reviewConfirmation = await import(
+  pathToFileURL(path.join(out, 'review-confirmation.mjs'))
+);
+test('bulk review confirmation updates real state and still allows individual changes', async () => {
+  const result = await ai.analyzeDetailed({ source: '영수증' });
+  const rows = result.rows.slice(0, 2);
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed(rows), false);
+
+  const confirmed = reviewConfirmation.confirmAllReviewRows(rows);
+  assert.ok(confirmed.every((row) => row.meaning.confirmed));
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed(confirmed), true);
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed([]), false);
+
+  const individuallyUnchecked = confirmed.map((row, index) =>
+    index === 0
+      ? {
+          ...row,
+          meaning: { ...row.meaning, confirmed: false },
+        }
+      : row,
+  );
+  assert.equal(
+    reviewConfirmation.allReviewRowsConfirmed(individuallyUnchecked),
+    false,
+  );
+});
 test('demo briefing prioritizes mushrooms and never includes expired items in menu', () => {
   const s = d.seed();
   assert.equal(d.ranked(s)[0].name, '버섯');
