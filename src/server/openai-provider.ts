@@ -247,7 +247,7 @@ export function createOpenAIProvider(
         response = await fetcher('https://api.openai.com/v1/responses', {
           method: 'POST',
           signal: options.signal,
-          redirect: 'error',
+          redirect: 'manual',
           headers: {
             Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
