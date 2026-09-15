@@ -293,6 +293,7 @@ export class AIBudget {
             networkError: diagnostic?.networkError ?? false,
             networkCategory: diagnostic?.networkCategory,
             dispatched: dispatched !== false,
+            reasonCode: diagnostic?.reasonCode,
             failure,
           };
         }
