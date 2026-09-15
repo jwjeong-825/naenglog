@@ -1096,6 +1096,79 @@ test('OpenAI strict schema makes every object property required without changing
     openAIAnalysisSchema.properties.rows.items.properties.expiryDate.anyOf,
   );
 });
+test('analysis validation reports privacy-safe reason codes for each domain rule', async () => {
+  const base = await openFixture();
+  base.rows[0].expiryDate = d.addDays(base.rows[0].purchasedAt, 1);
+  const cases = [
+    ['invalid_analysis_envelope', (x) => delete x.version],
+    ['invalid_warning_or_notice', (x) => x.warnings.push('')],
+    ['invalid_product_notice', (x) => (x.unresolved[0].extra = true)],
+    ['invalid_draft_basic_fields', (x) => (x.rows[0].unit = '')],
+    ['invalid_quantity', (x) => (x.rows[0].quantity = 0.0001)],
+    ['invalid_purchase_date', (x) => (x.rows[0].purchasedAt = '2026-02-30')],
+    ['invalid_expiry_date', (x) => (x.rows[0].expiryDate = '2020-01-01')],
+    ['invalid_storage', (x) => (x.rows[0].storage = '상온')],
+    [
+      'invalid_product_meaning',
+      (x) => (x.rows[0].meaning.storageCandidates = []),
+    ],
+    [
+      'normalized_food_name_mismatch',
+      (x) => (x.rows[0].meaning.normalizedFoodName = '다른 식품'),
+    ],
+    [
+      'invalid_weight_fields',
+      (x) => {
+        x.rows[0].meaning.weightPerUnit = null;
+        x.rows[0].meaning.weightUnit = 'g';
+      },
+    ],
+    [
+      'invalid_total_weight',
+      (x) => {
+        x.rows[0].meaning.weightPerUnit = 10;
+        x.rows[0].meaning.weightUnit = 'g';
+        x.rows[0].meaning.totalWeight = 999;
+      },
+    ],
+    ['invalid_resolution', (x) => (x.rows[0].meaning.resolution.evidence = [])],
+    ['invalid_analysis_fields', (x) => (x.unexpected = true)],
+    [
+      'empty_analysis',
+      (x) => {
+        x.rows = [];
+        x.unresolved = [];
+        x.excluded = [];
+      },
+    ],
+  ];
+  for (const [reasonCode, mutate] of cases) {
+    const value = structuredClone(base);
+    mutate(value);
+    assert.throws(
+      () => validateAnalysis(value),
+      (error) =>
+        error.reasonCode === reasonCode && error.message === reasonCode,
+      reasonCode,
+    );
+  }
+});
+test('OpenAI initial domain validation preserves the specific reason code', async () => {
+  const fixture = await openFixture();
+  fixture.rows[0].quantity = 0.0001;
+  let diagnostic;
+  const p = createOpenAIProvider(openEnv(), async () => openResponse(fixture));
+  await assert.rejects(
+    p.analyze(
+      { source: '직접 입력', text: '테스트 입력' },
+      { ...openOptions(), reportDiagnostic: (value) => (diagnostic = value) },
+    ),
+    (error) => error.code === 'invalid_response',
+  );
+  assert.equal(diagnostic.stage, 'domain');
+  assert.equal(diagnostic.reasonCode, 'invalid_quantity');
+  assert.ok(!JSON.stringify(diagnostic).includes('테스트 입력'));
+});
 test('OpenAI image analysis preserves three classifications, usage and confirmation with one Responses request', async () => {
   const fixture = await openFixture();
   let calls = 0,
@@ -1608,16 +1681,14 @@ test('Approved receipt recovery preserves unknown costs and history and is idemp
     assert.equal(first.revision, 3);
     sql.exec(migration);
     assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(), first);
-    sql
-      .prepare('UPDATE ai_budget SET snapshot=?,revision=2')
-      .run(
-        JSON.stringify({
-          ...original,
-          entries: [
-            { status: 'completed', usage: { inputTokens: 1 }, cost: 12358 },
-          ],
-        }),
-      );
+    sql.prepare('UPDATE ai_budget SET snapshot=?,revision=2').run(
+      JSON.stringify({
+        ...original,
+        entries: [
+          { status: 'completed', usage: { inputTokens: 1 }, cost: 12358 },
+        ],
+      }),
+    );
     sql.exec(migration);
     assert.equal(
       JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot)

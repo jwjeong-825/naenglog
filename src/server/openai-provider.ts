@@ -6,7 +6,7 @@ import {
   type RequestOptions,
   type ProviderDiagnostic,
 } from '../ai-service';
-import { validateAnalysis } from '../analysis';
+import { AnalysisValidationError, validateAnalysis } from '../analysis';
 import { isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
@@ -398,7 +398,6 @@ export function createOpenAIProvider(
         options,
         input.image,
         (raw, diagnostic) => {
-          let reason: DomainReason = 'domain_validation_failed';
           const fail = (code: DomainReason): never => {
             diagnostic.reasonCode = code;
             throw bad();
@@ -445,8 +444,12 @@ export function createOpenAIProvider(
           const result = (() => {
             try {
               return validateAnalysis(analysisRaw);
-            } catch {
-              return fail(reason);
+            } catch (error) {
+              return fail(
+                error instanceof AnalysisValidationError
+                  ? error.reasonCode
+                  : 'domain_validation_failed',
+              );
             }
           })();
           for (const row of result.rows) {
