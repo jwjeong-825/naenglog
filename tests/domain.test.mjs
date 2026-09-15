@@ -1185,6 +1185,46 @@ test('OpenAI initial domain validation preserves the specific reason code', asyn
   assert.equal(diagnostic.reasonCode, 'invalid_quantity');
   assert.ok(!JSON.stringify(diagnostic).includes('테스트 입력'));
 });
+test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
+  const cases = [
+    ['2026.09.15', '2026-09-15'],
+    ['2026/09/15', '2026-09-15'],
+    ['2026-09-15', '2026-09-15'],
+  ];
+  for (const [inputDate, expected] of cases) {
+    const fixture = await openFixture();
+    fixture.rows[0].purchasedAt = inputDate;
+    const provider = createOpenAIProvider(openEnv(), async () =>
+      openResponse(fixture),
+    );
+    const result = await provider.analyze(
+      { source: '직접 입력', text: '날짜 형식 테스트' },
+      openOptions(),
+    );
+    assert.equal(result.rows[0].purchasedAt, expected);
+  }
+
+  const invalid = await openFixture();
+  invalid.rows[0].purchasedAt = '2026-02-30';
+  invalid.rows[0].expiryDate = '2026-02-31';
+  let suppliedToday;
+  const provider = createOpenAIProvider(openEnv(), async (_url, init) => {
+    const request = JSON.parse(init.body);
+    suppliedToday = JSON.parse(request.input[0].content[0].text).today;
+    return openResponse(invalid);
+  });
+  const result = await provider.analyze(
+    { source: '직접 입력', text: '잘못된 날짜 테스트' },
+    openOptions(),
+  );
+  assert.equal(result.rows[0].purchasedAt, suppliedToday);
+  assert.equal(result.rows[0].expiryDate, undefined);
+  assert.ok(
+    result.warnings.includes(
+      '구매일을 영수증에서 확정하지 못해 오늘 날짜를 사용했습니다. 등록 전 확인해주세요.',
+    ),
+  );
+});
 test('OpenAI image analysis preserves three classifications, usage and confirmation with one Responses request', async () => {
   const fixture = await openFixture();
   let calls = 0,

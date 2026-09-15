@@ -7,7 +7,7 @@ import {
   type ProviderDiagnostic,
 } from '../ai-service';
 import { AnalysisValidationError, validateAnalysis } from '../analysis';
-import { isRecord, assertCommand } from '../validation';
+import { isDate, isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
 import type { PendingProduct } from '../receipt-resolution';
@@ -143,6 +143,15 @@ const known = (value: unknown, allowed: string[]) =>
       ? value
       : 'other'
     : null;
+const normalizeReceiptDate = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const match = /^(\d{4})([-./])(\d{2})\2(\d{2})$/.exec(value.trim());
+  if (!match) return null;
+  const normalized = `${match[1]}-${match[3]}-${match[4]}`;
+  return isDate(normalized) ? normalized : null;
+};
+const purchaseDateFallbackWarning =
+  '구매일을 영수증에서 확정하지 못해 오늘 날짜를 사용했습니다. 등록 전 확인해주세요.';
 async function boundedJSON(response: Response, max: number): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw bad();
@@ -387,13 +396,14 @@ export function createOpenAIProvider(
   return {
     mode: 'remote',
     async analyze(input, options) {
+      const suppliedToday = today();
       return request(
         openAIAnalysisSchema,
         `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim; normalize name and meaning.normalizedFoodName to the real food, not a code. Examples: 서울우1L may mean 우유; 하림블랙100X5 needs chicken context, otherwise unresolved. Keep salads, meal kits, lunch boxes as whole products, never split ingredients. Prices are never quantities. Unknown brand/weight/packaging/processed/openingSensitive must be null. Missing quantity or ambiguous identity goes unresolved with up to 3 candidates and evidence. Never invent expiryDate; use null unless explicitly printed. If purchase date absent, use supplied today and add a warning requiring confirmation. Weights must match quantity. resolution.method must be direct_ai, with evidence, score and matching classification. Low confidence or score below 0.7 must be unresolved. confirmed is false. No non-food is discarded. No OCR confidence claims without evidence. Return at most 5 food rows; additional visible products must remain unresolved and add a warning.`,
         {
           source: input.source,
           text: input.text ?? input.recognition?.text ?? '',
-          today: today(),
+          today: suppliedToday,
         },
         options,
         input.image,
@@ -415,7 +425,18 @@ export function createOpenAIProvider(
           for (const row of rows) {
             if (!isRecord(row)) fail('invalid_row_shape');
             if (!isRecord(row.meaning)) fail('invalid_meaning');
-            if (row.expiryDate === null) delete row.expiryDate;
+            const purchasedAt = normalizeReceiptDate(row.purchasedAt);
+            row.purchasedAt = purchasedAt ?? suppliedToday;
+            if (
+              !purchasedAt &&
+              Array.isArray(analysisRaw.warnings) &&
+              !analysisRaw.warnings.includes(purchaseDateFallbackWarning)
+            )
+              analysisRaw.warnings.push(purchaseDateFallbackWarning);
+            const expiryDate = normalizeReceiptDate(row.expiryDate);
+            if (expiryDate && expiryDate >= row.purchasedAt)
+              row.expiryDate = expiryDate;
+            else delete row.expiryDate;
           }
           for (const entry of [
             ...rows.map((row) => (row as Record<string, unknown>).meaning),
