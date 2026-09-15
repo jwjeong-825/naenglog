@@ -65,6 +65,13 @@ export async function GET() {
   }
 
   const d = latest.diagnostic ?? {};
+  const inferredReasonCode =
+    typeof d.reasonCode === 'string'
+      ? d.reasonCode
+      : d.stage === 'domain' && d.failure === 'invalid_response'
+        ? 'post_validation_rule_failed'
+        : null;
+
   return Response.json(
     {
       found: true,
@@ -74,7 +81,9 @@ export async function GET() {
       image: latest.image === true,
       status: latest.status ?? null,
       failure: typeof d.failure === 'string' ? d.failure : null,
-      reasonCode: typeof d.reasonCode === 'string' ? d.reasonCode : null,
+      reasonCode: inferredReasonCode,
+      reasonCodeInferred:
+        typeof d.reasonCode !== 'string' && inferredReasonCode !== null,
       stage: typeof d.stage === 'string' ? d.stage : null,
       httpStatus: Number.isInteger(d.httpStatus) ? d.httpStatus : null,
       errorCode: typeof d.errorCode === 'string' ? d.errorCode : null,
