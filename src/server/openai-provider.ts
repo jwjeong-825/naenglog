@@ -7,23 +7,13 @@ import {
   type ProviderDiagnostic,
 } from '../ai-service';
 import { AnalysisValidationError, validateAnalysis } from '../analysis';
-import { isDate, isRecord, assertCommand } from '../validation';
+import { normalizeAnalysisResult } from '../analysis-normalization';
+import { isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
-import type { PendingProduct } from '../receipt-resolution';
 
 type Schema = Record<string, unknown>;
 type DomainReason = NonNullable<ProviderDiagnostic['reasonCode']>;
-const unresolvedFromLowConfidence = (
-  row: ReturnType<typeof validateAnalysis>['rows'][number],
-): PendingProduct => ({
-  productName: row.productName,
-  reason: '상품명·수량을 직접 확인해주세요.',
-  resolution: {
-    ...row.meaning!.resolution!,
-    classification: 'UNCERTAIN',
-  },
-});
 /** Strict transport schema only; the domain schema remains authoritative. */
 export function strictSchema(value: Schema): Schema {
   const result: Schema = {};
@@ -143,15 +133,6 @@ const known = (value: unknown, allowed: string[]) =>
       ? value
       : 'other'
     : null;
-const normalizeReceiptDate = (value: unknown): string | null => {
-  if (typeof value !== 'string') return null;
-  const match = /^(\d{4})([-./])(\d{2})\2(\d{2})$/.exec(value.trim());
-  if (!match) return null;
-  const normalized = `${match[1]}-${match[3]}-${match[4]}`;
-  return isDate(normalized) ? normalized : null;
-};
-const purchaseDateFallbackWarning =
-  '구매일을 영수증에서 확정하지 못해 오늘 날짜를 사용했습니다. 등록 전 확인해주세요.';
 async function boundedJSON(response: Response, max: number): Promise<unknown> {
   const reader = response.body?.getReader();
   if (!reader) throw bad();
@@ -412,91 +393,21 @@ export function createOpenAIProvider(
             diagnostic.reasonCode = code;
             throw bad();
           };
-          const analysisRaw = isRecord(raw)
-            ? raw
-            : fail('domain_validation_failed');
-          const rows = Array.isArray(analysisRaw.rows)
-            ? analysisRaw.rows
-            : fail('invalid_row_shape');
-          const unresolved = Array.isArray(analysisRaw.unresolved)
-            ? analysisRaw.unresolved
-            : fail('invalid_unresolved_shape');
-          if (analysisRaw.excluded === null) delete analysisRaw.excluded;
-          for (const row of rows) {
-            if (!isRecord(row)) fail('invalid_row_shape');
-            if (!isRecord(row.meaning)) fail('invalid_meaning');
-            const purchasedAt = normalizeReceiptDate(row.purchasedAt);
-            row.purchasedAt = purchasedAt ?? suppliedToday;
-            if (
-              !purchasedAt &&
-              Array.isArray(analysisRaw.warnings) &&
-              !analysisRaw.warnings.includes(purchaseDateFallbackWarning)
-            )
-              analysisRaw.warnings.push(purchaseDateFallbackWarning);
-            const expiryDate = normalizeReceiptDate(row.expiryDate);
-            if (expiryDate && expiryDate >= row.purchasedAt)
-              row.expiryDate = expiryDate;
-            else delete row.expiryDate;
-          }
-          for (const entry of [
-            ...rows.map((row) => (row as Record<string, unknown>).meaning),
-            ...unresolved,
-            ...(Array.isArray(analysisRaw.excluded)
-              ? analysisRaw.excluded
-              : []),
-          ]) {
-            if (!isRecord(entry)) fail('invalid_unresolved_shape');
-            if (!isRecord(entry.resolution)) fail('missing_resolution_method');
-            if (entry.resolution.method !== 'direct_ai')
-              fail('invalid_resolution_method');
-            if (
-              !['FOOD', 'NON_FOOD', 'UNCERTAIN'].includes(
-                String(entry.resolution.classification),
-              )
-            )
-              fail('invalid_classification');
-            if (
-              !Number.isFinite(entry.resolution.score) ||
-              Number(entry.resolution.score) < 0 ||
-              Number(entry.resolution.score) > 1
-            )
-              fail('invalid_confidence_or_score');
-          }
-          const result = (() => {
+          const normalized = (() => {
             try {
-              return validateAnalysis(analysisRaw);
-            } catch (error) {
-              return fail(
-                error instanceof AnalysisValidationError
-                  ? error.reasonCode
-                  : 'domain_validation_failed',
-              );
+              return normalizeAnalysisResult(raw, suppliedToday);
+            } catch {
+              return fail('domain_validation_failed');
             }
           })();
-          for (const row of result.rows) {
-            const m = row.meaning!;
-            if (!['high', 'low'].includes(m.confidence))
-              fail('invalid_confidence_or_score');
-            if (m.resolution!.classification !== 'FOOD')
-              fail('invalid_classification');
-            if (m.confidence === 'low' || m.resolution!.score < 0.7)
-              result.unresolved.push(unresolvedFromLowConfidence(row));
-          }
-          result.rows = result.rows.filter(
-            (r) =>
-              r.meaning!.confidence !== 'low' &&
-              r.meaning!.resolution!.score >= 0.7,
-          );
-          if (
-            result.unresolved.some(
-              (r) => r.resolution?.classification !== 'UNCERTAIN',
-            )
-          )
-            fail('invalid_classification');
           try {
-            return validateAnalysis(result);
-          } catch {
-            fail('post_validation_rule_failed');
+            return validateAnalysis(normalized);
+          } catch (error) {
+            fail(
+              error instanceof AnalysisValidationError
+                ? error.reasonCode
+                : 'post_validation_rule_failed',
+            );
           }
         },
       );

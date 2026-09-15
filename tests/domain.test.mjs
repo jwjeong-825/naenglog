@@ -16,6 +16,7 @@ mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
   'analysis',
+  'analysis-normalization',
   'receipt-resolution',
   'server/ai-budget',
   'server/ai-budget-admin',
@@ -595,6 +596,12 @@ test('server AI requires own session, validates image bytes, and runs without ex
     assert.equal(body.result.rows.length, 4);
     assert.ok(body.result.warnings.length);
     assert.ok(body.result.rows.every((r) => !r.meaning.confirmed));
+    const online = await send({
+      operation: 'analyze',
+      input: { source: '온라인 캡처', image },
+    });
+    assert.equal(online.status, 200);
+    assert.ok((await online.json()).result.rows.length > 0);
     const move = await send({
       operation: 'interpret',
       text: '닭가슴살 냉동으로 옮겼어',
@@ -896,6 +903,9 @@ test('expired reservations remain charged after restart and inventory remains wr
 const { validateAnalysis } = await import(
   pathToFileURL(path.join(out, 'analysis.mjs'))
 );
+const { normalizeAnalysisResult } = await import(
+  pathToFileURL(path.join(out, 'analysis-normalization.mjs'))
+);
 const resolution = await import(
   pathToFileURL(path.join(out, 'receipt-resolution.mjs'))
 );
@@ -1169,21 +1179,48 @@ test('receipt, display and normalized food names may differ by design', async ()
     );
   }
 });
-test('OpenAI initial domain validation preserves the specific reason code', async () => {
+test('OpenAI recoverable row defects become unresolved instead of invalid responses', async () => {
   const fixture = await openFixture();
   fixture.rows[0].quantity = 0.0001;
   let diagnostic;
   const p = createOpenAIProvider(openEnv(), async () => openResponse(fixture));
-  await assert.rejects(
-    p.analyze(
-      { source: '직접 입력', text: '테스트 입력' },
-      { ...openOptions(), reportDiagnostic: (value) => (diagnostic = value) },
-    ),
-    (error) => error.code === 'invalid_response',
+  const result = await p.analyze(
+    { source: '직접 입력', text: '테스트 입력' },
+    { ...openOptions(), reportDiagnostic: (value) => (diagnostic = value) },
   );
   assert.equal(diagnostic.stage, 'domain');
-  assert.equal(diagnostic.reasonCode, 'invalid_quantity');
+  assert.equal(diagnostic.reasonCode, undefined);
+  assert.equal(result.rows.length, 0);
+  assert.ok(result.unresolved.length > 0);
   assert.ok(!JSON.stringify(diagnostic).includes('테스트 입력'));
+});
+test('analysis normalization aligns containers and isolates quantity and weight defects', async () => {
+  const fixture = await openFixture();
+  delete fixture.rows[0].expiryDate;
+  fixture.rows[0].meaning.resolution.classification = 'UNCERTAIN';
+  fixture.unresolved[0].resolution.classification = 'FOOD';
+  fixture.excluded[0].resolution.classification = 'FOOD';
+  fixture.rows[0].meaning.weightPerUnit = 500;
+  fixture.rows[0].meaning.weightUnit = 'g';
+  fixture.rows[0].meaning.totalWeight = 999;
+  const priceRow = structuredClone(fixture.rows[0]);
+  priceRow.productName = '행사상품 3,500원';
+  priceRow.quantity = 3500;
+  priceRow.unit = '원';
+  fixture.rows.push(priceRow);
+
+  const normalized = normalizeAnalysisResult(fixture, '2026-09-15');
+  const validated = validateAnalysis(normalized);
+  assert.equal(validated.rows[0].meaning.resolution.classification, 'FOOD');
+  assert.equal(validated.unresolved[0].resolution.classification, 'UNCERTAIN');
+  assert.equal(validated.excluded[0].resolution.classification, 'NON_FOOD');
+  assert.equal(validated.rows[0].meaning.weightPerUnit, null);
+  assert.equal(validated.rows[0].meaning.weightUnit, null);
+  assert.equal(validated.rows[0].meaning.totalWeight, null);
+  assert.ok(
+    validated.unresolved.some((item) => item.productName.includes('3,500원')),
+  );
+  assert.ok(validated.rows.every((row) => row.meaning.confirmed === false));
 });
 test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
   const cases = [
@@ -1756,7 +1793,7 @@ test('Approved receipt recovery preserves unknown costs and history and is idemp
   }
 });
 
-test('Receipt recovery allows only one globally reserved image and blocks background AI', async () => {
+test('legacy receipt recovery marker is removed without erasing budget history', async () => {
   const { db, sql } = makeRepository();
   try {
     const ledger = {
@@ -1779,24 +1816,13 @@ test('Receipt recovery allows only one globally reserved image and blocks backgr
       });
       return { ok: true };
     };
-    await assert.rejects(budget.run('home', 'briefing', true, false, {}, work));
-    await assert.rejects(budget.run('text', 'analyze', true, false, {}, work));
-    assert.equal(calls, 0);
-    const results = await Promise.allSettled([
-      budget.run('one', 'analyze', true, true, { image: '1' }, work),
-      budget.run('two', 'analyze', true, true, { image: '2' }, work),
-    ]);
-    assert.equal(results.filter((x) => x.status === 'fulfilled').length, 1);
-    assert.equal(calls, 1);
-    await assert.rejects(
-      budget.run('three', 'analyze', true, true, { image: '3' }, work),
-    );
+    await budget.run('one', 'analyze', true, true, { image: '1' }, work);
     assert.equal(calls, 1);
     const row = sql
       .prepare('SELECT snapshot FROM ai_budget WHERE id=?')
       .get('championship-2026');
     const saved = JSON.parse(row.snapshot);
-    assert.equal(saved.receiptTest.remaining, 0);
+    assert.equal(saved.receiptTest, undefined);
     assert.equal(saved.entries.length, 1);
     assert.ok(saved.total >= 12358);
   } finally {
