@@ -7,6 +7,10 @@ import type {
 } from '../src/receipt-resolution';
 import { ProductReview } from './product-review';
 import { isNonFoodProductName } from '../src/analysis-normalization';
+import {
+  allReviewRowsConfirmed,
+  confirmAllReviewRows,
+} from '../src/review-confirmation';
 /* Preview uses a local blob URL; analysis sends validated bytes to our server. */
 /* eslint-disable next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
@@ -1047,6 +1051,16 @@ export default function Home() {
                         있어요.
                       </p>
                     )}
+                    <button
+                      className="secondary wide"
+                      disabled={saving || allReviewRowsConfirmed(rows)}
+                      onClick={() => setRows(confirmAllReviewRows(rows))}
+                    >
+                      <Check size={18} />
+                      {allReviewRowsConfirmed(rows)
+                        ? '모두 확인 완료'
+                        : '전체 확인했습니다.'}
+                    </button>
                     <button
                       className="primary wide"
                       disabled={
