@@ -1464,6 +1464,47 @@ test('ten clear foods all remain FOOD and the domain safety cap remains 50', asy
     (error) => error.reasonCode === 'invalid_analysis_envelope',
   );
 });
+test('twenty clear foods stay in rows while only a genuinely ambiguous code is unresolved', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const clearNames = Array.from({ length: 20 }, (_, index) =>
+    index % 2 === 0 ? `서울우유 ${index + 1} 1L` : `신라면 ${index + 1} 5입`,
+  );
+  fixture.rows = clearNames.map((productName) => ({
+    ...structuredClone(template),
+    productName,
+  }));
+  fixture.unresolved = [
+    {
+      productName: 'ABC100',
+      reason: '상품 코드만 있어 식품 종류를 확정할 수 없습니다.',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['식품 종류를 확인할 단어가 없습니다.'],
+        candidates: ['우유', '두유'],
+      },
+    },
+  ];
+  fixture.excluded = [];
+  fixture.warnings = [];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 20);
+  assert.deepEqual(
+    result.unresolved.map((item) => item.productName),
+    ['ABC100'],
+  );
+  assert.deepEqual(result.warnings, []);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+});
 test('mixed non-food products stay excluded and never enter user review cards', async () => {
   const fixture = await openFixture();
   const template = fixture.rows[0];
