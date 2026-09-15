@@ -27,6 +27,8 @@ const units = new Map<string, string>([
   ['박스', '박스'],
   ['포', '포'],
   ['통', '통'],
+  ['모', '모'],
+  ['단', '단'],
   ['구', '구'],
   ['입', '개'],
   ['알', '알'],
@@ -207,6 +209,15 @@ const clearFoods: Array<[RegExp, ClearFood]> = [
     },
   ],
   [
+    /대파|쪽파|실파/,
+    {
+      normalizedFoodName: '대파',
+      category: '채소',
+      storage: '냉장',
+      defaultUnit: '단',
+    },
+  ],
+  [
     /과일/,
     {
       normalizedFoodName: '과일',
@@ -218,6 +229,8 @@ const clearFoods: Array<[RegExp, ClearFood]> = [
 ];
 const nonFoodPattern =
   /키친타월|휴지|섬유\s*탈취제|탈취제|세제|샴푸|린스|화장지|건전지|청소용품|생활용품|위생용품/;
+const obsoleteFoodCountWarning =
+  /(?:at\s+most|top|maximum)\s*5|(?:상위|최대)\s*5\s*개|5\s*개(?:를|가|만)?\s*(?:제한|초과)|5\s*food/i;
 
 const clearFood = (productName: unknown) => {
   if (typeof productName !== 'string' || nonFoodPattern.test(productName))
@@ -474,7 +487,9 @@ export function normalizeAnalysisResult(
   )
     throw new Error('invalid_analysis_envelope');
 
-  const warnings = normalizeStrings(raw.warnings, 10, 300);
+  const warnings = normalizeStrings(raw.warnings, 10, 300).filter(
+    (warning) => !obsoleteFoodCountWarning.test(warning),
+  );
   const rows: Draft[] = [];
   const unresolved: PendingProduct[] = [];
   const excluded = (raw.excluded ?? [])
@@ -531,5 +546,15 @@ export function normalizeAnalysisResult(
     else if (normalized.pending) unresolved.push(normalized.pending);
   }
 
-  return { version: 1, rows, unresolved, excluded, warnings };
+  const visibleWarnings = warnings.filter(
+    (warning) =>
+      !excluded.some((item) => warning.includes(item.productName.trim())),
+  );
+  return {
+    version: 1,
+    rows,
+    unresolved,
+    excluded,
+    warnings: visibleWarnings,
+  };
 }

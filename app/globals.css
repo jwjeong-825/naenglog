@@ -859,20 +859,6 @@ label [data-slot='select-trigger'] {
   padding: 20px 0;
   border-bottom: 1px solid var(--border);
 }
-.excluded-products {
-  padding: 16px 0;
-  border-bottom: 1px solid var(--border);
-}
-.excluded-products summary {
-  cursor: pointer;
-  min-height: 44px;
-  padding: 8px 0;
-  font-size: 14px;
-}
-.excluded-products p {
-  font-size: 14px;
-  color: var(--muted-foreground);
-}
 .receipt-classification h2 {
   margin: 24px 0 6px;
 }

@@ -1357,6 +1357,122 @@ test('egg tray and Korean multipack counts never become weight quantities', asyn
     ],
   );
 });
+test('eight clear foods remain eight FOOD rows without count overflow', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    '햇반 6개입',
+    '국산콩 두부 1모',
+    '배추김치 1팩',
+    '대파 1단',
+    '무항생제 계란 10구',
+    '서울우유 1L',
+    '청정원 진간장 500ml',
+    '신라면 5입',
+  ].map((productName) => ({ ...structuredClone(template), productName }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  fixture.warnings = [
+    '식품 항목이 5개를 초과해 일부 식품은 unresolved로 이동했습니다.',
+  ];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 8);
+  assert.equal(result.unresolved.length, 0);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+  assert.deepEqual(result.warnings, []);
+});
+test('ten clear foods all remain FOOD and the domain safety cap remains 50', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const productNames = [
+    '서울우유',
+    '무항생제 계란',
+    '청정원 진간장',
+    '신라면',
+    '배추김치',
+    '국산콩 두부',
+    '생수',
+    '요구르트',
+    '햇반',
+    '참기름',
+  ];
+  fixture.rows = productNames.map((productName) => ({
+    ...structuredClone(template),
+    productName,
+  }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 10);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+
+  const fifty = structuredClone(result);
+  fifty.rows = Array.from({ length: 50 }, (_, index) => ({
+    ...structuredClone(result.rows[0]),
+    productName: `서울우유 ${index + 1}`,
+  }));
+  assert.equal(validateAnalysis(fifty).rows.length, 50);
+  const fiftyOne = structuredClone(fifty);
+  fiftyOne.rows.push(structuredClone(fifty.rows[0]));
+  assert.throws(
+    () => validateAnalysis(fiftyOne),
+    (error) => error.reasonCode === 'invalid_analysis_envelope',
+  );
+});
+test('mixed non-food products stay excluded and never enter user review cards', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    { ...structuredClone(template), productName: '서울우유 1L' },
+    { ...structuredClone(template), productName: '크리넥스 키친타월 4롤' },
+  ];
+  fixture.unresolved = [
+    {
+      productName: '페브리즈 섬유탈취제 370ml',
+      reason: '식품명 직접 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.2,
+        method: 'direct_ai',
+        evidence: ['상품명'],
+        candidates: [],
+      },
+    },
+  ];
+  fixture.excluded = [];
+  fixture.warnings = ['크리넥스 키친타월 4롤은 식품명 직접 확인이 필요합니다.'];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map((row) => row.productName),
+    ['서울우유 1L'],
+  );
+  assert.deepEqual(result.unresolved, []);
+  assert.deepEqual(
+    result.excluded.map((item) => item.productName).sort(),
+    ['크리넥스 키친타월 4롤', '페브리즈 섬유탈취제 370ml'].sort(),
+  );
+  assert.deepEqual(result.warnings, []);
+
+  const reviewSource = readFileSync('app/receipt-review.tsx', 'utf8');
+  assert.match(reviewSource, /excludedCount/);
+  assert.doesNotMatch(reviewSource, /excluded\.map|onRestore|ExcludedProduct/);
+  assert.doesNotMatch(reviewSource, /키친타월|섬유탈취제/);
+});
 test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
   const cases = [
     ['2026.09.15', '2026-09-15'],
