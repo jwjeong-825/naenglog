@@ -25,9 +25,17 @@ export async function GET() {
   }
 
   const entries = Array.isArray(ledger?.entries) ? ledger.entries : [];
+
+  // We are debugging receipt/image analysis specifically. Background briefing failures
+  // can be newer and would otherwise hide the relevant analyze diagnostic.
   const latest = [...entries]
     .reverse()
-    .find((entry: any) => entry?.status === 'uncertain' || entry?.diagnostic);
+    .find(
+      (entry: any) =>
+        entry?.feature === 'analyze' &&
+        entry?.image === true &&
+        (entry?.status === 'uncertain' || entry?.diagnostic),
+    );
 
   if (!latest) {
     return Response.json(
