@@ -686,7 +686,7 @@ function databaseFor(sql) {
     }),
   };
 }
-const { AIBudget } = await import(
+const { AIBudget, ANALYSIS_CACHE_VERSION, fingerprint } = await import(
   pathToFileURL(path.join(out, 'server/ai-budget.mjs'))
 );
 const budgetEnv = (now) => ({
@@ -743,6 +743,72 @@ test('budget cache, trial quota, mock isolation and admin protection', async () 
   );
   assert.equal(response.status, 200);
   assert.ok(!(await response.text()).includes('session'));
+  sql.close();
+});
+test('analysis cache version invalidates only stale analyze results', async () => {
+  const { sql, db } = makeRepository();
+  const now = Date.now();
+  const b = new AIBudget(db, {}, () => now);
+  const analyzeInput = { receipt: 'same-input' };
+  const interpretInput = { text: 'same-input' };
+  const oldAnalyzeKey = await fingerprint({
+    session: 'cache-version',
+    feature: 'analyze',
+    input: analyzeInput,
+    p: null,
+    version: 2,
+  });
+  const existingInterpretKey = await fingerprint({
+    session: 'cache-version',
+    feature: 'interpret',
+    input: interpretInput,
+    p: null,
+    version: 2,
+  });
+  const insertCache = sql.prepare(
+    'INSERT INTO ai_cache (cache_key,payload,expires_at) VALUES (?,?,?)',
+  );
+  insertCache.run(
+    oldAnalyzeKey,
+    JSON.stringify({ source: 'old-analyze' }),
+    now + 60_000,
+  );
+  insertCache.run(
+    existingInterpretKey,
+    JSON.stringify({ source: 'cached-interpret' }),
+    now + 60_000,
+  );
+
+  let analyzeCalls = 0;
+  const analyzed = await b.run(
+    'cache-version',
+    'analyze',
+    false,
+    true,
+    analyzeInput,
+    async () => {
+      analyzeCalls++;
+      return { source: 'new-analyze' };
+    },
+  );
+  let interpretCalls = 0;
+  const interpreted = await b.run(
+    'cache-version',
+    'interpret',
+    false,
+    false,
+    interpretInput,
+    async () => {
+      interpretCalls++;
+      return { source: 'new-interpret' };
+    },
+  );
+
+  assert.equal(ANALYSIS_CACHE_VERSION, 3);
+  assert.deepEqual(analyzed, { source: 'new-analyze' });
+  assert.equal(analyzeCalls, 1);
+  assert.deepEqual(interpreted, { source: 'cached-interpret' });
+  assert.equal(interpretCalls, 0);
   sql.close();
 });
 test('atomic reservations cap concurrent spending and preserve uncertain charges', async () => {

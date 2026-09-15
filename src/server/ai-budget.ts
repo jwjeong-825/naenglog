@@ -61,6 +61,10 @@ const perSessionLimit: Record<Feature, number> = {
   briefing: 5,
   interpret: 15,
 };
+// Bump only when the receipt-analysis prompt, policy, or normalization changes.
+// Other feature caches deliberately retain their existing key namespace.
+export const ANALYSIS_CACHE_VERSION = 3;
+const DEFAULT_CACHE_VERSION = 2;
 export const limits = (feature: Feature) => ({
   maxInputTokens: feature === 'analyze' ? 16000 : 6000,
   maxOutputTokens:
@@ -201,7 +205,9 @@ export class AIBudget {
       bounds = limits(feature),
       now = this.now();
     const ledgerId = remote ? 'championship-2026' : 'championship-2026-mock';
-    const key = await fingerprint({ session, feature, input, p, version: 2 });
+    const version =
+      feature === 'analyze' ? ANALYSIS_CACHE_VERSION : DEFAULT_CACHE_VERSION;
+    const key = await fingerprint({ session, feature, input, p, version });
     const cached = await this.db
       .prepare(
         'SELECT payload FROM ai_cache WHERE cache_key=? AND expires_at>?',
