@@ -10,9 +10,20 @@ import { validateAnalysis } from '../analysis';
 import { isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
+import type { PendingProduct } from '../receipt-resolution';
 
 type Schema = Record<string, unknown>;
 type DomainReason = NonNullable<ProviderDiagnostic['reasonCode']>;
+const unresolvedFromLowConfidence = (
+  row: ReturnType<typeof validateAnalysis>['rows'][number],
+): PendingProduct => ({
+  productName: row.productName,
+  reason: '상품명·수량을 직접 확인해주세요.',
+  resolution: {
+    ...row.meaning!.resolution!,
+    classification: 'UNCERTAIN',
+  },
+});
 /** Strict transport schema only; the domain schema remains authoritative. */
 export function strictSchema(value: Schema): Schema {
   const result: Schema = {};
@@ -445,11 +456,7 @@ export function createOpenAIProvider(
             if (m.resolution!.classification !== 'FOOD')
               fail('invalid_classification');
             if (m.confidence === 'low' || m.resolution!.score < 0.7)
-              result.unresolved.push({
-                productName: row.productName,
-                reason: '상품명·수량을 직접 확인해주세요.',
-                resolution: { ...m.resolution!, classification: 'UNCERTAIN' },
-              });
+              result.unresolved.push(unresolvedFromLowConfidence(row));
           }
           result.rows = result.rows.filter(
             (r) =>
