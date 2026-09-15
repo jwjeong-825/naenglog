@@ -85,10 +85,12 @@ const unavailable = () =>
     'unavailable',
     'OpenAI 분석을 완료하지 못했어요. 다시 시도하거나 직접 입력해주세요.',
   );
-// Cost bounds have been reviewed for high-detail images on this model family only.
 const modelFamily = 'gpt-5.4-mini';
 const supportedModels = [modelFamily, `${modelFamily}-2026-03-17`];
-// Only protocol identifiers from a closed vocabulary enter diagnostics. Never messages.
+const isCompatibleResponseModel = (value: unknown, requested: string) =>
+  typeof value === 'string' &&
+  (value === requested ||
+    (requested === modelFamily && value.startsWith(`${modelFamily}-`)));
 const errorCodes = [
   'invalid_api_key',
   'invalid_request_error',
@@ -208,8 +210,6 @@ export function createOpenAIProvider(
         });
       }
       const instructions = `${safety}\n${instruction}`;
-      // UTF-8 bytes upper-bound text tokens; include schema, framing and a conservative
-      // high-detail vision allowance (2,500 patches × 1.2 plus framing < 4,096).
       const inputBound =
         new TextEncoder().encode(JSON.stringify({ instructions, schema, data }))
           .length +
@@ -221,7 +221,6 @@ export function createOpenAIProvider(
           '한 번에 처리할 내용이 너무 많아요. 식품을 나누어 입력해주세요.',
         );
       let response: Response;
-      // Serialize before marking dispatch: local failures cannot have reached OpenAI.
       const requestBody = JSON.stringify({
         model,
         instructions,
@@ -259,7 +258,9 @@ export function createOpenAIProvider(
         });
       } catch (error) {
         diagnostic.networkError = !options.signal.aborted;
-        diagnostic.networkCategory = options.signal.aborted ? undefined : classifyNetworkError(error);
+        diagnostic.networkCategory = options.signal.aborted
+          ? undefined
+          : classifyNetworkError(error);
         throw unavailable();
       }
       diagnostic.httpStatus = response.status;
@@ -310,11 +311,7 @@ export function createOpenAIProvider(
         throw bad();
       }
       diagnostic.stage = 'model';
-      if (
-        !isRecord(body) ||
-        !supportedModels.includes(String(body.model)) ||
-        (model !== modelFamily && body.model !== model)
-      )
+      if (!isRecord(body) || !isCompatibleResponseModel(body.model, model!))
         throw bad();
       diagnostic.stage = 'usage';
       if (
@@ -389,7 +386,6 @@ export function createOpenAIProvider(
         input.image,
       );
       if (!isRecord(raw) || !Array.isArray(raw.rows)) throw bad();
-      // Nullable transport optionals are omitted before the unchanged domain validator.
       if (raw.excluded === null) delete raw.excluded;
       for (const row of raw.rows) {
         if (!isRecord(row)) throw bad();
