@@ -102,3 +102,7 @@ Network에는 서비스의 /api/ai만 있고 OpenAI 키는 없어야 한다. 내
 receiptTest가 존재하는 동안 remote briefing/자연어/텍스트 분석은 차단하며 이미지 분석만1회 예약 가능하다. 동시 CAS 안에서 allowance를 소모하므로 여러 탭/세션으로 중복 호출하지 못한다. 성공/실패와 관계없이 추가 요청은 차단된다. 기존 가격/글로벌/세션/동시성/retry0 제한도 유지한다. 기존 캐시 재표시는 외부 호출 없이 가능하다. 자동 briefing 실패는 UI의 명시적 기본 규칙 안내로 처리된다. 공개 사이트에서는 누가 먼저 이미지 요청을 보내느냐에 따라1회가 소모될 수 있으므로 잔여가0이면 임의로 재충전하지 말고 장부를 확인한다.
 
 배포 순서: 기존 v5에 AI_PROVIDER=mock 적용→성공 확인→복구 migration+1회 제한 코드 배포→장부 확인→원래 openai 설정 복원·재배포. 이 과정에서 외부 AI 요청은 실행하지 않는다. 정해진 복구 조건이 불일치하면 장부를 덮어쓰지 않고 진단한다. Secrets는 읽어 출력하거나 변경하지 않는다.
+
+## 2026-09-15 · 키 없는 네트워크 진단
+network-diagnostics는 예외 원문을 출력하지 않고 DNS/TLS/refused/reset/connect-timeout/redirect/header구성/runtime제한/generic 범주만 반환한다. OpenAI 어댑터의 diagnostic.networkCategory에도 연결한다.
+/api/internal/network-diagnostics GET은 서버 Worker에서 example.com/ 및 api.openai.com/에 HEAD만 수행한다. 키/쿠키/이미지/사용자입력/모델endpoint 전송 없음, redirect 수동/오류 모드 비교, 5초 제한, isolate당 결과 재사용. 같은 런타임에서 실제 env로 Request 객체만 구성하여 header 유효성도 확인하되 값을 노출하지 않는다. 장부/할당량과 무관한 읽기 진단이다. HTTPS 성공은 DNS/TLS/HTTP 경로가 동작한다는 증거이며 개별 TCP/DNS 인터페이스 검사를 의미하지 않는다. Sites 공식 문서상 raw TCP는 미지원. 실제 운영 결과는 배포 후 확인한다.

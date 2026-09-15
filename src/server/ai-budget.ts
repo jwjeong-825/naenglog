@@ -291,6 +291,7 @@ export class AIBudget {
             parameter: diagnostic?.parameter ?? null,
             timeout: failure === 'timeout' || diagnostic?.timeout === true,
             networkError: diagnostic?.networkError ?? false,
+            networkCategory: diagnostic?.networkCategory,
             dispatched: dispatched !== false,
             failure,
           };

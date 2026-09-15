@@ -22,6 +22,7 @@ for (const name of [
   'image-input',
   'server/ai-provider',
   'server/openai-provider',
+  'server/network-diagnostics',
   'server/ai-handlers',
   'product',
   'validation',
@@ -1611,4 +1612,33 @@ test('Receipt recovery allows only one globally reserved image and blocks backgr
     assert.equal(saved.entries.length,1);
     assert.ok(saved.total>=12358);
   } finally {sql.close();}
+});
+
+test('Network categories never return raw exception text', async () => {
+  const {classifyNetworkError}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
+  for (const [error,category] of [
+    [{cause:{code:'ENOTFOUND'},message:'PRIVATE'},'dns_failure'],
+    [{code:'CERT_HAS_EXPIRED'},'tls_failure'],
+    [{code:'ECONNREFUSED'},'connection_refused'],
+    [{code:'ECONNRESET'},'connection_reset'],
+    [{message:'Fetch is not allowed PRIVATE'},'runtime_restriction'],
+    [{message:'Invalid header value PRIVATE'},'request_construction'],
+    [{message:'PRIVATE'},'generic_network_failure'],
+  ]) assert.equal(classifyNetworkError(error),category);
+});
+
+test('Network probes are cached fixed HEAD requests without credentials or inference', async () => {
+  const {networkProbe}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
+  const calls=[];
+  const fake=async(url,options)=>{calls.push({url,options});return new Response(null,{status:403});};
+  const results=await networkProbe(fake);
+  await networkProbe(fake);
+  assert.equal(calls.length,3);
+  for(const {url,options} of calls){
+    assert.ok(['https://example.com/','https://api.openai.com/'].includes(url));
+    assert.equal(options.method,'HEAD');
+    assert.equal(options.headers,undefined);
+    assert.equal(options.body,undefined);
+  }
+  assert.ok(results.every(x=>x.httpStatus===403));
 });

@@ -1,4 +1,5 @@
 import analysisSchema from '../../schemas/analysis-result.schema.json' with { type: 'json' };
+import { classifyNetworkError } from './network-diagnostics';
 import {
   AIServiceError,
   type AIProvider,
@@ -256,8 +257,9 @@ export function createOpenAIProvider(
           },
           body: requestBody,
         });
-      } catch {
+      } catch (error) {
         diagnostic.networkError = !options.signal.aborted;
+        diagnostic.networkCategory = options.signal.aborted ? undefined : classifyNetworkError(error);
         throw unavailable();
       }
       diagnostic.httpStatus = response.status;

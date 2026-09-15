@@ -48,6 +48,7 @@ export type ProviderDiagnostic = {
   parameter: string | null;
   timeout: boolean;
   networkError: boolean;
+  networkCategory?: string;
   dispatched: boolean;
 };
 /** Provider implementations return untrusted data; remote activation is server configured. */

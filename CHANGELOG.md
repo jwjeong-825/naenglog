@@ -78,3 +78,6 @@ Responses API analyze/interpret/briefing, strict schema 변환, 서버 키/Proje
 - 명시 승인된 기존 장부 조건부 halted 해제 migration. 미확정 예약과 모든 과거 이력 보존.
 - 영수증 이미지1회만 원자적으로 허용하고 자동 briefing/추가 AI 차단.
 - 테스트54개/typecheck/lint/build 통과. 유료 호출 없음.
+
+## 2026-09-15 · 비과금 네트워크 진단
+DNS/TLS/연결/refused/reset/런타임/redirect/요청구성 오류 분류 추가. 고정 공개 endpoint HEAD만 사용하는 운영 진단 경로와 credential없는 요청 테스트 추가. paid 장부는 변경하지 않는다.
