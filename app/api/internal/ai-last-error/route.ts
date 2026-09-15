@@ -2,15 +2,21 @@ import { env } from 'cloudflare:workers';
 
 export async function GET() {
   const bindings = env as unknown as { DB: D1Database };
-  const row = await bindings.DB
-    .prepare('SELECT snapshot, revision FROM ai_budget WHERE id=?')
+  const row = await bindings.DB.prepare(
+    'SELECT snapshot, revision FROM ai_budget WHERE id=?',
+  )
     .bind('championship-2026')
     .first<{ snapshot: string; revision: number }>();
 
   if (!row) {
     return Response.json(
       { found: false },
-      { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      },
     );
   }
 
@@ -20,7 +26,12 @@ export async function GET() {
   } catch {
     return Response.json(
       { found: false, ledgerReadable: false },
-      { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      },
     );
   }
 
@@ -44,7 +55,12 @@ export async function GET() {
         halted: ledger?.halted === true,
         revision: row.revision,
       },
-      { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },
+      {
+        headers: {
+          'Cache-Control': 'no-store',
+          'X-Content-Type-Options': 'nosniff',
+        },
+      },
     );
   }
 
@@ -58,6 +74,7 @@ export async function GET() {
       image: latest.image === true,
       status: latest.status ?? null,
       failure: typeof d.failure === 'string' ? d.failure : null,
+      reasonCode: typeof d.reasonCode === 'string' ? d.reasonCode : null,
       stage: typeof d.stage === 'string' ? d.stage : null,
       httpStatus: Number.isInteger(d.httpStatus) ? d.httpStatus : null,
       errorCode: typeof d.errorCode === 'string' ? d.errorCode : null,
@@ -79,6 +96,11 @@ export async function GET() {
         ? latest.usage.outputTokens
         : null,
     },
-    { headers: { 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' } },
+    {
+      headers: {
+        'Cache-Control': 'no-store',
+        'X-Content-Type-Options': 'nosniff',
+      },
+    },
   );
 }
