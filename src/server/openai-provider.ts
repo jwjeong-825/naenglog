@@ -12,6 +12,7 @@ import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
 
 type Schema = Record<string, unknown>;
+type DomainReason = NonNullable<ProviderDiagnostic['reasonCode']>;
 /** Strict transport schema only; the domain schema remains authoritative. */
 export function strictSchema(value: Schema): Schema {
   const result: Schema = {};
@@ -169,6 +170,7 @@ export function createOpenAIProvider(
     data: unknown,
     options: RequestOptions,
     image?: { mimeType: string; base64: string },
+    validateDomain?: (raw: unknown, diagnostic: ProviderDiagnostic) => unknown,
   ) {
     const diagnostic: ProviderDiagnostic = {
       stage: 'preflight',
@@ -352,7 +354,7 @@ export function createOpenAIProvider(
       try {
         const decoded: unknown = JSON.parse(texts[0]);
         diagnostic.stage = 'domain';
-        return decoded;
+        return validateDomain ? validateDomain(decoded, diagnostic) : decoded;
       } catch {
         throw bad();
       }
@@ -374,7 +376,7 @@ export function createOpenAIProvider(
   return {
     mode: 'remote',
     async analyze(input, options) {
-      const raw = await request(
+      return request(
         openAIAnalysisSchema,
         `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim; normalize name and meaning.normalizedFoodName to the real food, not a code. Examples: 서울우1L may mean 우유; 하림블랙100X5 needs chicken context, otherwise unresolved. Keep salads, meal kits, lunch boxes as whole products, never split ingredients. Prices are never quantities. Unknown brand/weight/packaging/processed/openingSensitive must be null. Missing quantity or ambiguous identity goes unresolved with up to 3 candidates and evidence. Never invent expiryDate; use null unless explicitly printed. If purchase date absent, use supplied today and add a warning requiring confirmation. Weights must match quantity. resolution.method must be direct_ai, with evidence, score and matching classification. Low confidence or score below 0.7 must be unresolved. confirmed is false. No non-food is discarded. No OCR confidence claims without evidence. Return at most 5 food rows; additional visible products must remain unresolved and add a warning.`,
         {
@@ -384,49 +386,89 @@ export function createOpenAIProvider(
         },
         options,
         input.image,
+        (raw, diagnostic) => {
+          let reason: DomainReason = 'domain_validation_failed';
+          const fail = (code: DomainReason): never => {
+            diagnostic.reasonCode = code;
+            throw bad();
+          };
+          const analysisRaw = isRecord(raw)
+            ? raw
+            : fail('domain_validation_failed');
+          const rows = Array.isArray(analysisRaw.rows)
+            ? analysisRaw.rows
+            : fail('invalid_row_shape');
+          const unresolved = Array.isArray(analysisRaw.unresolved)
+            ? analysisRaw.unresolved
+            : fail('invalid_unresolved_shape');
+          if (analysisRaw.excluded === null) delete analysisRaw.excluded;
+          for (const row of rows) {
+            if (!isRecord(row)) fail('invalid_row_shape');
+            if (!isRecord(row.meaning)) fail('invalid_meaning');
+            if (row.expiryDate === null) delete row.expiryDate;
+          }
+          for (const entry of [
+            ...rows.map((row) => (row as Record<string, unknown>).meaning),
+            ...unresolved,
+            ...(Array.isArray(analysisRaw.excluded)
+              ? analysisRaw.excluded
+              : []),
+          ]) {
+            if (!isRecord(entry)) fail('invalid_unresolved_shape');
+            if (!isRecord(entry.resolution)) fail('missing_resolution_method');
+            if (entry.resolution.method !== 'direct_ai')
+              fail('invalid_resolution_method');
+            if (
+              !['FOOD', 'NON_FOOD', 'UNCERTAIN'].includes(
+                String(entry.resolution.classification),
+              )
+            )
+              fail('invalid_classification');
+            if (
+              !Number.isFinite(entry.resolution.score) ||
+              Number(entry.resolution.score) < 0 ||
+              Number(entry.resolution.score) > 1
+            )
+              fail('invalid_confidence_or_score');
+          }
+          const result = (() => {
+            try {
+              return validateAnalysis(analysisRaw);
+            } catch {
+              return fail(reason);
+            }
+          })();
+          for (const row of result.rows) {
+            const m = row.meaning!;
+            if (!['high', 'low'].includes(m.confidence))
+              fail('invalid_confidence_or_score');
+            if (m.resolution!.classification !== 'FOOD')
+              fail('invalid_classification');
+            if (m.confidence === 'low' || m.resolution!.score < 0.7)
+              result.unresolved.push({
+                productName: row.productName,
+                reason: '상품명·수량을 직접 확인해주세요.',
+                resolution: { ...m.resolution!, classification: 'UNCERTAIN' },
+              });
+          }
+          result.rows = result.rows.filter(
+            (r) =>
+              r.meaning!.confidence !== 'low' &&
+              r.meaning!.resolution!.score >= 0.7,
+          );
+          if (
+            result.unresolved.some(
+              (r) => r.resolution?.classification !== 'UNCERTAIN',
+            )
+          )
+            fail('invalid_classification');
+          try {
+            return validateAnalysis(result);
+          } catch {
+            fail('post_validation_rule_failed');
+          }
+        },
       );
-      if (!isRecord(raw) || !Array.isArray(raw.rows)) throw bad();
-      if (raw.excluded === null) delete raw.excluded;
-      for (const row of raw.rows) {
-        if (!isRecord(row)) throw bad();
-        if (row.expiryDate === null) delete row.expiryDate;
-      }
-      let result;
-      try {
-        result = validateAnalysis(raw);
-      } catch {
-        throw bad();
-      }
-      for (const entry of [
-        ...result.rows.map((r) => r.meaning!),
-        ...result.unresolved,
-        ...(result.excluded ?? []),
-      ]) {
-        if (!entry.resolution || entry.resolution.method !== 'direct_ai')
-          throw bad();
-      }
-      for (const row of result.rows) {
-        const m = row.meaning!;
-        if (m.resolution!.classification !== 'FOOD') throw bad();
-        if (m.confidence === 'low' || m.resolution!.score < 0.7)
-          result.unresolved.push({
-            productName: row.productName,
-            reason: '상품명·수량을 직접 확인해주세요.',
-            resolution: { ...m.resolution!, classification: 'UNCERTAIN' },
-          });
-      }
-      result.rows = result.rows.filter(
-        (r) =>
-          r.meaning!.confidence !== 'low' &&
-          r.meaning!.resolution!.score >= 0.7,
-      );
-      if (
-        result.unresolved.some(
-          (r) => r.resolution?.classification !== 'UNCERTAIN',
-        )
-      )
-        throw bad();
-      return validateAnalysis(result);
     },
     async interpret(text, state, options) {
       const raw = await request(
