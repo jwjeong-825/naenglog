@@ -38,7 +38,9 @@ type Entry = {
   diagnostic?: ProviderDiagnostic & { failure: string };
 };
 type Ledger = {
-  total: number; halted: boolean; entries: Entry[];
+  total: number;
+  halted: boolean;
+  entries: Entry[];
   receiptTest?: { remaining: number; recovery: string };
 };
 export class BudgetError extends Error {
@@ -216,13 +218,12 @@ export class AIBudget {
       );
     const id = crypto.randomUUID();
     await this.mutate(ledgerId, (ledger) => {
-      // Operator-approved one-shot recovery: background briefing and old tabs
-      // cannot spend the receipt test allowance. Consumed in the same CAS as cost.
-      if (remote && ledger.receiptTest &&
-          (feature !== 'analyze' || !image || ledger.receiptTest.remaining !== 1))
-        throw new BudgetError(429,
-          '현재 영수증 이미지 1회 테스트만 허용됩니다. 기본 냉장고 기능은 계속 사용할 수 있습니다.',
-          'busy');
+      // Remove the temporary one-shot recovery gate after the network fix.
+      // Preserve historical entries and reserved amounts, but resume normal guarded use.
+      if (remote && ledger.receiptTest) {
+        delete ledger.receiptTest;
+        ledger.halted = false;
+      }
       for (const entry of ledger.entries)
         if (entry.status === 'pending' && now - entry.at > 120000)
           entry.status = 'uncertain';
@@ -255,7 +256,6 @@ export class AIBudget {
           '이미 처리한 요청이거나 다른 AI 요청을 처리 중입니다. 기존 결과를 확인하거나 잠시 후 다시 시도해주세요.',
           'busy',
         );
-      if (remote && ledger.receiptTest) ledger.receiptTest.remaining = 0;
       ledger.total += reserved;
       ledger.entries.push({
         id,
