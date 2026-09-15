@@ -143,3 +143,7 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 ## 진행 중 · 승인된 영수증1회 테스트 준비
 운영 paid장부 revision2/halted=true/total12358/uncertain1 재확인. 0002 조건부 복구 migration과 receiptTest 원자적1회 제한 추가. 기존 감사/예약/확정과금 기록 보존. Mock 테스트54개/typecheck/lint/build 통과. 외부 호출0. 기존 v5를 임시 Mock으로 배포해 안전한 복구 단계 진행 중. 다음: 배포 성공→새코드+0002 배포→DB 확인→openai 복원 배포→haltedfalse/잔여1/총액불변 최종 확인. 장부 해제는 이번 사용자 요청으로 명시 승인됨.
+
+복구 적용 확인: 버전6 migration 배포 성공(env12 Mock). 운영 paid장부 revision3/halted=false/receiptTest.remaining1/total12358/과거entry1 불변. 감사기록 추가. 원래 OpenAI 설정을 env revision13으로 복원하여 최종 배포 진행 중(appgdep_6aa8908c32ac8191b61400e1ba66446b). 실제 AI 호출0. 서버는 receiptTest가 존재하는 동안 이미지분석1회 이외 paid요청을 차단한다.
+
+최종 완료: 버전6/env13(OpenAI) succeeded. 운영 장부 revision3/haltedfalse/잔여1/총액12358/과거이력1 확인. 실제 모델 미호출. 사용자가 새로고침 후 이미지 분석 버튼1회 실행 가능. 다음은 사용자 테스트 후 diagnostic/usage 확인이며 임의 재충전·장부 초기화 금지.
