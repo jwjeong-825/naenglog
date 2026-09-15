@@ -1104,7 +1104,7 @@ test('OpenAI image analysis preserves three classifications, usage and confirmat
     calls++;
     assert.equal(url, 'https://api.openai.com/v1/responses');
     assert.ok(init.signal);
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     const body = JSON.parse(init.body);
     assert.equal(body.store, false);
     assert.deepEqual(body.tools, []);
@@ -1152,6 +1152,13 @@ test('OpenAI low confidence remains unresolved rather than an invented confirmed
   );
   assert.equal(r.rows.length, 0);
   assert.equal(r.unresolved.length, 2);
+  assert.deepEqual(validateAnalysis(r), r);
+  assert.deepEqual(Object.keys(r.unresolved.at(-1)).sort(), [
+    'productName',
+    'reason',
+    'resolution',
+  ]);
+  assert.equal(r.unresolved.at(-1).resolution.classification, 'UNCERTAIN');
 });
 test('OpenAI rejects malformed JSON, schema, refusal, incomplete and unexpected model', async () => {
   for (const [body, patch] of [
@@ -1566,79 +1573,145 @@ test('Budget persists timeout diagnostics without resetting uncertain costs', as
 });
 
 test('Approved receipt recovery preserves unknown costs and history and is idempotent', () => {
-  const sql=new DatabaseSync(':memory:');
+  const sql = new DatabaseSync(':memory:');
   try {
-    sql.exec('CREATE TABLE ai_budget(id TEXT PRIMARY KEY,snapshot TEXT NOT NULL,revision INTEGER NOT NULL)');
-    const original={total:12358,halted:true,entries:[{status:'uncertain',usage:null,cost:12358,reserved:12358,id:'prior'}]};
-    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(original),2);
-    const migration=readFileSync('drizzle/0002_receipt_test_recovery.sql','utf8');
+    sql.exec(
+      'CREATE TABLE ai_budget(id TEXT PRIMARY KEY,snapshot TEXT NOT NULL,revision INTEGER NOT NULL)',
+    );
+    const original = {
+      total: 12358,
+      halted: true,
+      entries: [
+        {
+          status: 'uncertain',
+          usage: null,
+          cost: 12358,
+          reserved: 12358,
+          id: 'prior',
+        },
+      ],
+    };
+    sql
+      .prepare('INSERT INTO ai_budget VALUES(?,?,?)')
+      .run('championship-2026', JSON.stringify(original), 2);
+    const migration = readFileSync(
+      'drizzle/0002_receipt_test_recovery.sql',
+      'utf8',
+    );
     sql.exec(migration);
-    const first=sql.prepare('SELECT * FROM ai_budget').get(), after=JSON.parse(first.snapshot);
-    assert.equal(after.halted,false);
-    assert.equal(after.total,original.total);
-    assert.deepEqual(after.entries,original.entries);
-    assert.equal(after.receiptTest.remaining,1);
-    assert.equal(first.revision,3);
+    const first = sql.prepare('SELECT * FROM ai_budget').get(),
+      after = JSON.parse(first.snapshot);
+    assert.equal(after.halted, false);
+    assert.equal(after.total, original.total);
+    assert.deepEqual(after.entries, original.entries);
+    assert.equal(after.receiptTest.remaining, 1);
+    assert.equal(first.revision, 3);
     sql.exec(migration);
-    assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(),first);
-    sql.prepare('UPDATE ai_budget SET snapshot=?,revision=2').run(JSON.stringify({...original,entries:[{status:'completed',usage:{inputTokens:1},cost:12358}]}));
+    assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(), first);
+    sql
+      .prepare('UPDATE ai_budget SET snapshot=?,revision=2')
+      .run(
+        JSON.stringify({
+          ...original,
+          entries: [
+            { status: 'completed', usage: { inputTokens: 1 }, cost: 12358 },
+          ],
+        }),
+      );
     sql.exec(migration);
-    assert.equal(JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot).halted,true);
-  } finally {sql.close();}
+    assert.equal(
+      JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot)
+        .halted,
+      true,
+    );
+  } finally {
+    sql.close();
+  }
 });
 
 test('Receipt recovery allows only one globally reserved image and blocks background AI', async () => {
-  const {db,sql}=makeRepository();
+  const { db, sql } = makeRepository();
   try {
-    const ledger={total:12358,halted:false,entries:[],receiptTest:{remaining:1,recovery:'test'}};
-    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(ledger),3);
-    const budget=new AIBudget(db,openEnv());
-    let calls=0;
-    const work=async(o)=>{calls++;o.reportUsage({model:'gpt-5.4-mini',inputTokens:10,outputTokens:10});return {ok:true};};
-    await assert.rejects(budget.run('home','briefing',true,false,{},work));
-    await assert.rejects(budget.run('text','analyze',true,false,{},work));
-    assert.equal(calls,0);
-    const results=await Promise.allSettled([
-      budget.run('one','analyze',true,true,{image:'1'},work),
-      budget.run('two','analyze',true,true,{image:'2'},work),
+    const ledger = {
+      total: 12358,
+      halted: false,
+      entries: [],
+      receiptTest: { remaining: 1, recovery: 'test' },
+    };
+    sql
+      .prepare('INSERT INTO ai_budget VALUES(?,?,?)')
+      .run('championship-2026', JSON.stringify(ledger), 3);
+    const budget = new AIBudget(db, openEnv());
+    let calls = 0;
+    const work = async (o) => {
+      calls++;
+      o.reportUsage({
+        model: 'gpt-5.4-mini',
+        inputTokens: 10,
+        outputTokens: 10,
+      });
+      return { ok: true };
+    };
+    await assert.rejects(budget.run('home', 'briefing', true, false, {}, work));
+    await assert.rejects(budget.run('text', 'analyze', true, false, {}, work));
+    assert.equal(calls, 0);
+    const results = await Promise.allSettled([
+      budget.run('one', 'analyze', true, true, { image: '1' }, work),
+      budget.run('two', 'analyze', true, true, { image: '2' }, work),
     ]);
-    assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
-    assert.equal(calls,1);
-    await assert.rejects(budget.run('three','analyze',true,true,{image:'3'},work));
-    assert.equal(calls,1);
-    const row=sql.prepare('SELECT snapshot FROM ai_budget WHERE id=?').get('championship-2026');
-    const saved=JSON.parse(row.snapshot);
-    assert.equal(saved.receiptTest.remaining,0);
-    assert.equal(saved.entries.length,1);
-    assert.ok(saved.total>=12358);
-  } finally {sql.close();}
+    assert.equal(results.filter((x) => x.status === 'fulfilled').length, 1);
+    assert.equal(calls, 1);
+    await assert.rejects(
+      budget.run('three', 'analyze', true, true, { image: '3' }, work),
+    );
+    assert.equal(calls, 1);
+    const row = sql
+      .prepare('SELECT snapshot FROM ai_budget WHERE id=?')
+      .get('championship-2026');
+    const saved = JSON.parse(row.snapshot);
+    assert.equal(saved.receiptTest.remaining, 0);
+    assert.equal(saved.entries.length, 1);
+    assert.ok(saved.total >= 12358);
+  } finally {
+    sql.close();
+  }
 });
 
 test('Network categories never return raw exception text', async () => {
-  const {classifyNetworkError}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
-  for (const [error,category] of [
-    [{cause:{code:'ENOTFOUND'},message:'PRIVATE'},'dns_failure'],
-    [{code:'CERT_HAS_EXPIRED'},'tls_failure'],
-    [{code:'ECONNREFUSED'},'connection_refused'],
-    [{code:'ECONNRESET'},'connection_reset'],
-    [{message:'Fetch is not allowed PRIVATE'},'runtime_restriction'],
-    [{message:'Invalid header value PRIVATE'},'request_construction'],
-    [{message:'PRIVATE'},'generic_network_failure'],
-  ]) assert.equal(classifyNetworkError(error),category);
+  const { classifyNetworkError } = await import(
+    pathToFileURL(path.join(out, 'server/network-diagnostics.mjs'))
+  );
+  for (const [error, category] of [
+    [{ cause: { code: 'ENOTFOUND' }, message: 'PRIVATE' }, 'dns_failure'],
+    [{ code: 'CERT_HAS_EXPIRED' }, 'tls_failure'],
+    [{ code: 'ECONNREFUSED' }, 'connection_refused'],
+    [{ code: 'ECONNRESET' }, 'connection_reset'],
+    [{ message: 'Fetch is not allowed PRIVATE' }, 'runtime_restriction'],
+    [{ message: 'Invalid header value PRIVATE' }, 'request_construction'],
+    [{ message: 'PRIVATE' }, 'generic_network_failure'],
+  ])
+    assert.equal(classifyNetworkError(error), category);
 });
 
 test('Network probes are cached fixed HEAD requests without credentials or inference', async () => {
-  const {networkProbe}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
-  const calls=[];
-  const fake=async(url,options)=>{calls.push({url,options});return new Response(null,{status:403});};
-  const results=await networkProbe(fake);
+  const { networkProbe } = await import(
+    pathToFileURL(path.join(out, 'server/network-diagnostics.mjs'))
+  );
+  const calls = [];
+  const fake = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(null, { status: 403 });
+  };
+  const results = await networkProbe(fake);
   await networkProbe(fake);
-  assert.equal(calls.length,3);
-  for(const {url,options} of calls){
-    assert.ok(['https://example.com/','https://api.openai.com/'].includes(url));
-    assert.equal(options.method,'HEAD');
-    assert.equal(options.headers,undefined);
-    assert.equal(options.body,undefined);
+  assert.equal(calls.length, 3);
+  for (const { url, options } of calls) {
+    assert.ok(
+      ['https://example.com/', 'https://api.openai.com/'].includes(url),
+    );
+    assert.equal(options.method, 'HEAD');
+    assert.equal(options.headers, undefined);
+    assert.equal(options.body, undefined);
   }
-  assert.ok(results.every(x=>x.httpStatus===403));
+  assert.ok(results.every((x) => x.httpStatus === 403));
 });
