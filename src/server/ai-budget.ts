@@ -56,6 +56,11 @@ export class BudgetError extends Error {
 }
 const exhausted =
   '대회 체험용 AI 사용 한도에 도달했습니다. 기존 냉장고 기능은 계속 이용할 수 있습니다.';
+const perSessionLimit: Record<Feature, number> = {
+  analyze: 20,
+  briefing: 5,
+  interpret: 15,
+};
 export const limits = (feature: Feature) => ({
   maxInputTokens: feature === 'analyze' ? 16000 : 6000,
   maxOutputTokens:
@@ -238,8 +243,7 @@ export class AIBudget {
         own.filter(
           (e) =>
             e.feature === feature && (feature !== 'briefing' || e.day === day),
-        ).length >=
-        (feature === 'analyze' ? 4 : feature === 'briefing' ? 5 : 15)
+        ).length >= perSessionLimit[feature]
       )
         throw new BudgetError(429, exhausted);
       if (

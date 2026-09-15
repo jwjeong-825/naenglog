@@ -705,18 +705,18 @@ test('budget cache, trial quota, mock isolation and admin protection', async () 
     calls++;
     return { ok: true };
   };
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 20; i++) {
     await b.run('one', 'analyze', false, true, i, work);
     now += 4000;
   }
   await b.run('one', 'analyze', false, true, 0, work);
-  assert.equal(calls, 4);
+  assert.equal(calls, 20);
   await assert.rejects(
-    b.run('one', 'analyze', false, true, 5, work),
+    b.run('one', 'analyze', false, true, 20, work),
     (e) => e.status === 429,
   );
   await b.run('two', 'analyze', false, true, 0, work);
-  assert.equal(calls, 5);
+  assert.equal(calls, 21);
   assert.equal((await b.summary(false)).estimatedKrw, 0);
   assert.equal((await b.summary()).requests, 0);
   const { budgetStatus } = await import(
