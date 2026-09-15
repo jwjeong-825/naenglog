@@ -1018,7 +1018,7 @@ export default function Home() {
                 )}
                 <ReceiptReview
                   pending={unresolved}
-                  excluded={excluded}
+                  excludedCount={excluded.length}
                   onResolve={(i, draft) => {
                     setRows([...rows, draft]);
                     setUnresolved(unresolved.filter((_, j) => i !== j));
@@ -1026,17 +1026,6 @@ export default function Home() {
                   onDismiss={(i) =>
                     setUnresolved(unresolved.filter((_, j) => i !== j))
                   }
-                  onRestore={(i) => {
-                    const item = excluded[i];
-                    setUnresolved([
-                      ...unresolved,
-                      {
-                        productName: item.productName,
-                        reason: '식품명과 수량을 직접 확인해주세요.',
-                      },
-                    ]);
-                    setExcluded(excluded.filter((_, j) => i !== j));
-                  }}
                 />
                 {rows.length > 0 && (
                   <section className="registration-footer">

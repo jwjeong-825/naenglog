@@ -1181,6 +1181,9 @@ test('receipt, display and normalized food names may differ by design', async ()
 });
 test('OpenAI recoverable row defects become unresolved instead of invalid responses', async () => {
   const fixture = await openFixture();
+  fixture.rows[0].productName = 'ABC100';
+  fixture.rows[0].name = 'ABC100';
+  fixture.rows[0].meaning.normalizedFoodName = 'ABC100';
   fixture.rows[0].quantity = 0.0001;
   let diagnostic;
   const p = createOpenAIProvider(openEnv(), async () => openResponse(fixture));
@@ -1221,6 +1224,138 @@ test('analysis normalization aligns containers and isolates quantity and weight 
     validated.unresolved.some((item) => item.productName.includes('3,500원')),
   );
   assert.ok(validated.rows.every((row) => row.meaning.confirmed === false));
+});
+test('clear Korean grocery labels are automatic FOOD while non-food stays hidden from review', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const labels = [
+    ['무항생제 계란 10구', '무항생제 계란', '계란', 10, '구'],
+    ['서울우유 1L', '서울우유', '우유', 1, '팩'],
+    ['청정원 진간장 500ml', '청정원 진간장', '간장', 1, '병'],
+    ['신라면 5입', '신라면', '라면', 5, '봉'],
+  ];
+  fixture.rows = labels.map(([productName]) => ({
+    ...structuredClone(template),
+    productName,
+    meaning: {
+      ...structuredClone(template.meaning),
+      confidence: 'low',
+      resolution: {
+        ...structuredClone(template.meaning.resolution),
+        classification: 'UNCERTAIN',
+        score: 0.4,
+        candidates: ['후보'],
+      },
+    },
+  }));
+  fixture.unresolved = [
+    {
+      productName: '서울1000',
+      reason: '상품 코드가 모호합니다.',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['식품 종류를 확정할 문구가 없습니다.'],
+        candidates: ['우유', '두유'],
+      },
+    },
+    {
+      productName: '크리넥스 키친타월 4롤',
+      reason: '분류 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['생활용품 문구'],
+        candidates: [],
+      },
+    },
+    {
+      productName: '페브리즈 섬유탈취제 370ml',
+      reason: '분류 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['생활용품 문구'],
+        candidates: [],
+      },
+    },
+  ];
+  fixture.excluded = [];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  for (const [productName, name, normalizedName, quantity, unit] of labels) {
+    const row = result.rows.find((item) => item.productName === productName);
+    assert.ok(row);
+    assert.equal(row.name, name);
+    assert.equal(row.meaning.normalizedFoodName, normalizedName);
+    assert.equal(row.quantity, quantity);
+    assert.equal(row.unit, unit);
+    assert.equal(row.meaning.resolution.classification, 'FOOD');
+    assert.deepEqual(row.meaning.resolution.candidates, []);
+  }
+  const milk = result.rows.find((item) => item.productName === '서울우유 1L');
+  assert.deepEqual(
+    [
+      milk.meaning.weightPerUnit,
+      milk.meaning.weightUnit,
+      milk.meaning.totalWeight,
+    ],
+    [1, 'L', 1],
+  );
+  const soySauce = result.rows.find(
+    (item) => item.productName === '청정원 진간장 500ml',
+  );
+  assert.deepEqual(
+    [
+      soySauce.meaning.weightPerUnit,
+      soySauce.meaning.weightUnit,
+      soySauce.meaning.totalWeight,
+    ],
+    [500, 'ml', 500],
+  );
+  assert.deepEqual(
+    result.unresolved.map((item) => item.productName),
+    ['서울1000'],
+  );
+  assert.deepEqual(result.unresolved[0].resolution.candidates, [
+    '우유',
+    '두유',
+  ]);
+  assert.deepEqual(
+    result.excluded.map((item) => item.productName).sort(),
+    ['크리넥스 키친타월 4롤', '페브리즈 섬유탈취제 370ml'].sort(),
+  );
+});
+test('egg tray and Korean multipack counts never become weight quantities', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  fixture.rows = [
+    ['계란 10구', 10, '구'],
+    ['계란 15구', 15, '구'],
+    ['계란 30구', 30, '구'],
+    ['요구르트 4입', 4, '개'],
+    ['햇반 6개입', 6, '개'],
+  ].map(([productName]) => ({ ...structuredClone(template), productName }));
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map(({ quantity, unit }) => [quantity, unit]),
+    [
+      [10, '구'],
+      [15, '구'],
+      [30, '구'],
+      [4, '개'],
+      [6, '개'],
+    ],
+  );
 });
 test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
   const cases = [
@@ -1309,11 +1444,14 @@ test('OpenAI image analysis preserves three classifications, usage and confirmat
 });
 test('OpenAI low confidence remains unresolved rather than an invented confirmed product', async () => {
   const f = await openFixture();
+  f.rows[0].productName = 'ABC100';
+  f.rows[0].name = 'ABC100';
+  f.rows[0].meaning.normalizedFoodName = 'ABC100';
   f.rows[0].meaning.confidence = 'low';
   f.rows[0].meaning.resolution.score = 0.5;
   const p = createOpenAIProvider(openEnv(), async () => openResponse(f));
   const r = await p.analyze(
-    { source: '직접 입력', text: '계란 2개' },
+    { source: '직접 입력', text: 'ABC100' },
     openOptions(),
   );
   assert.equal(r.rows.length, 0);

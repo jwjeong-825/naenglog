@@ -27,6 +27,8 @@ const units = new Map<string, string>([
   ['박스', '박스'],
   ['포', '포'],
   ['통', '통'],
+  ['구', '구'],
+  ['입', '개'],
   ['알', '알'],
   ['줄', '줄'],
   ['g', 'g'],
@@ -34,6 +36,228 @@ const units = new Map<string, string>([
   ['ml', 'ml'],
   ['l', 'L'],
 ]);
+
+type ClearFood = {
+  normalizedFoodName: string;
+  category: string;
+  storage: Storage;
+  defaultUnit: string;
+};
+const clearFoods: Array<[RegExp, ClearFood]> = [
+  [
+    /계란|달걀/,
+    {
+      normalizedFoodName: '계란',
+      category: '달걀',
+      storage: '냉장',
+      defaultUnit: '구',
+    },
+  ],
+  [
+    /진간장|국간장|양조간장|간장/,
+    {
+      normalizedFoodName: '간장',
+      category: '조미료',
+      storage: '실온',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /신라면|라면/,
+    {
+      normalizedFoodName: '라면',
+      category: '가공식품',
+      storage: '실온',
+      defaultUnit: '봉',
+    },
+  ],
+  [
+    /우유/,
+    {
+      normalizedFoodName: '우유',
+      category: '유제품',
+      storage: '냉장',
+      defaultUnit: '팩',
+    },
+  ],
+  [
+    /김치/,
+    {
+      normalizedFoodName: '김치',
+      category: '반찬',
+      storage: '냉장',
+      defaultUnit: '팩',
+    },
+  ],
+  [
+    /만두|왕교자/,
+    {
+      normalizedFoodName: '만두',
+      category: '냉동식품',
+      storage: '냉동',
+      defaultUnit: '봉',
+    },
+  ],
+  [
+    /두부/,
+    {
+      normalizedFoodName: '두부',
+      category: '가공식품',
+      storage: '냉장',
+      defaultUnit: '모',
+    },
+  ],
+  [
+    /생수|먹는샘물/,
+    {
+      normalizedFoodName: '생수',
+      category: '음료',
+      storage: '실온',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /요구르트|요거트/,
+    {
+      normalizedFoodName: '요구르트',
+      category: '유제품',
+      storage: '냉장',
+      defaultUnit: '개',
+    },
+  ],
+  [
+    /햇반|즉석밥/,
+    {
+      normalizedFoodName: '즉석밥',
+      category: '가공식품',
+      storage: '실온',
+      defaultUnit: '개',
+    },
+  ],
+  [
+    /참기름/,
+    {
+      normalizedFoodName: '참기름',
+      category: '조미료',
+      storage: '실온',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /식용유/,
+    {
+      normalizedFoodName: '식용유',
+      category: '조미료',
+      storage: '실온',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /소스/,
+    {
+      normalizedFoodName: '소스',
+      category: '조미료',
+      storage: '냉장',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /과자/,
+    {
+      normalizedFoodName: '과자',
+      category: '간식',
+      storage: '실온',
+      defaultUnit: '봉',
+    },
+  ],
+  [
+    /빵/,
+    {
+      normalizedFoodName: '빵',
+      category: '베이커리',
+      storage: '실온',
+      defaultUnit: '개',
+    },
+  ],
+  [
+    /음료|주스/,
+    {
+      normalizedFoodName: '음료',
+      category: '음료',
+      storage: '냉장',
+      defaultUnit: '병',
+    },
+  ],
+  [
+    /고기|삼겹살|돼지고기|소고기|닭고기/,
+    {
+      normalizedFoodName: '고기',
+      category: '육류',
+      storage: '냉장',
+      defaultUnit: '팩',
+    },
+  ],
+  [
+    /채소|야채/,
+    {
+      normalizedFoodName: '채소',
+      category: '채소',
+      storage: '냉장',
+      defaultUnit: '팩',
+    },
+  ],
+  [
+    /과일/,
+    {
+      normalizedFoodName: '과일',
+      category: '과일',
+      storage: '냉장',
+      defaultUnit: '개',
+    },
+  ],
+];
+const nonFoodPattern =
+  /키친타월|휴지|섬유\s*탈취제|탈취제|세제|샴푸|린스|화장지|건전지|청소용품|생활용품|위생용품/;
+
+const clearFood = (productName: unknown) => {
+  if (typeof productName !== 'string' || nonFoodPattern.test(productName))
+    return null;
+  return clearFoods.find(([pattern]) => pattern.test(productName))?.[1] ?? null;
+};
+
+const displayName = (productName: string) =>
+  productName
+    .replace(/\s+\d+(?:\.\d+)?\s*(?:kg|ml|g|L|구|개입|입|팩|봉|병|캔)\s*$/i, '')
+    .trim();
+
+const packageDetails = (productName: string, food: ClearFood) => {
+  const count = /(\d+(?:\.\d+)?)\s*(구|개입|입|팩|봉|병|캔)(?:\s|$)/.exec(
+    productName,
+  );
+  const weight = /(\d+(?:\.\d+)?)\s*(kg|ml|g|L)(?:\s|$)/i.exec(productName);
+  const quantity = count ? Number(count[1]) : 1;
+  const countUnit = count?.[2];
+  const unit =
+    countUnit === '입' || countUnit === '개입'
+      ? food.defaultUnit
+      : (countUnit ?? food.defaultUnit);
+  const weightPerUnit = weight ? Number(weight[1]) : null;
+  const weightUnit = weight
+    ? ({ g: 'g', kg: 'kg', ml: 'ml', l: 'L' } as const)[
+        weight[2].toLowerCase() as 'g' | 'kg' | 'ml' | 'l'
+      ]
+    : null;
+  return {
+    quantity,
+    unit,
+    weightPerUnit,
+    weightUnit,
+    totalWeight:
+      weightPerUnit === null
+        ? null
+        : Math.round(weightPerUnit * quantity * 1000) / 1000,
+  };
+};
 
 const text = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= max;
@@ -120,6 +344,21 @@ const normalizeRow = (
   const pending = () => pendingFrom(raw) ?? undefined;
   if (!isRecord(raw.meaning)) return { pending: pending() };
   const meaning = raw.meaning;
+  const knownFood = clearFood(raw.productName);
+  if (knownFood && text(raw.productName, 120)) {
+    const details = packageDetails(raw.productName, knownFood);
+    raw.name = displayName(raw.productName);
+    raw.category = knownFood.category;
+    raw.storage = knownFood.storage;
+    raw.quantity = details.quantity;
+    raw.unit = details.unit;
+    meaning.normalizedFoodName = knownFood.normalizedFoodName;
+    meaning.weightPerUnit = details.weightPerUnit;
+    meaning.weightUnit = details.weightUnit;
+    meaning.totalWeight = details.totalWeight;
+    meaning.storageCandidates = [knownFood.storage];
+    meaning.confidence = 'high';
+  }
   const quantity = raw.quantity;
   const unit = normalizeUnit(raw.unit);
   if (!isQuantity(quantity) || quantity <= 0 || !unit)
@@ -152,6 +391,19 @@ const normalizeRow = (
   raw.unit = unit;
 
   const resolution = normalizeResolution(meaning.resolution, 'FOOD');
+  if (knownFood) {
+    resolution.score = Math.max(resolution.score, 0.9);
+    resolution.candidates = [];
+    if (
+      !resolution.evidence.includes(
+        '상품명에 식품 종류가 명확히 표시되어 있습니다.',
+      )
+    )
+      resolution.evidence = [
+        '상품명에 식품 종류가 명확히 표시되어 있습니다.',
+        ...resolution.evidence,
+      ].slice(0, 5);
+  }
   const reasons = normalizeStrings(meaning.reasons, 5, 300);
   const weightPerUnit = meaning.weightPerUnit;
   const weightUnit = meaning.weightUnit;
@@ -224,15 +476,57 @@ export function normalizeAnalysisResult(
 
   const warnings = normalizeStrings(raw.warnings, 10, 300);
   const rows: Draft[] = [];
-  const unresolved = raw.unresolved
-    .map((value) => normalizeNotice(value, 'UNCERTAIN'))
-    .filter((value): value is PendingProduct => value !== null);
+  const unresolved: PendingProduct[] = [];
   const excluded = (raw.excluded ?? [])
     .map((value) => normalizeNotice(value, 'NON_FOOD'))
     .filter((value): value is ExcludedProduct => value !== null);
 
-  for (const value of raw.rows) {
-    const normalized = normalizeRow(value, suppliedToday, warnings);
+  for (const value of [...raw.rows, ...raw.unresolved]) {
+    if (isRecord(value) && nonFoodPattern.test(String(value.productName))) {
+      const notice = normalizeNotice(value, 'NON_FOOD');
+      if (notice) excluded.push(notice as ExcludedProduct);
+      continue;
+    }
+    if (
+      isRecord(value) &&
+      raw.unresolved.includes(value) &&
+      !clearFood(value.productName)
+    ) {
+      const notice = normalizeNotice(value, 'UNCERTAIN');
+      if (notice) unresolved.push(notice);
+      continue;
+    }
+    const rowValue =
+      isRecord(value) &&
+      !isRecord(value.meaning) &&
+      clearFood(value.productName)
+        ? {
+            ...value,
+            name: value.productName,
+            quantity: 1,
+            unit: '개',
+            category: '미분류',
+            purchasedAt: suppliedToday,
+            storage: '냉장',
+            meaning: {
+              version: 1,
+              normalizedFoodName: value.productName,
+              brand: null,
+              weightPerUnit: null,
+              weightUnit: null,
+              totalWeight: null,
+              packaging: null,
+              storageCandidates: ['냉장'],
+              processed: null,
+              openingSensitive: null,
+              confidence: 'high',
+              reasons: [incompleteEvidence],
+              confirmed: false,
+              resolution: value.resolution,
+            },
+          }
+        : value;
+    const normalized = normalizeRow(rowValue, suppliedToday, warnings);
     if (normalized.row) rows.push(normalized.row);
     else if (normalized.pending) unresolved.push(normalized.pending);
   }
