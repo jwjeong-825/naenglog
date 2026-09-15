@@ -3,6 +3,7 @@ import { foods, today, type Draft, type Storage } from './domain';
 export type ProductMeaning = {
   version: 1;
   resolution?: Resolution;
+  /** Canonical food identity, independent from the receipt and display labels. */
   normalizedFoodName: string;
   brand: string | null;
   weightPerUnit: number | null;

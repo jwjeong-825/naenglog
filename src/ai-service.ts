@@ -60,7 +60,6 @@ export type ProviderDiagnostic = {
     | 'invalid_expiry_date'
     | 'invalid_storage'
     | 'invalid_product_meaning'
-    | 'normalized_food_name_mismatch'
     | 'invalid_weight_fields'
     | 'invalid_total_weight'
     | 'invalid_resolution'

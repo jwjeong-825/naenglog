@@ -1113,10 +1113,6 @@ test('analysis validation reports privacy-safe reason codes for each domain rule
       (x) => (x.rows[0].meaning.storageCandidates = []),
     ],
     [
-      'normalized_food_name_mismatch',
-      (x) => (x.rows[0].meaning.normalizedFoodName = '다른 식품'),
-    ],
-    [
       'invalid_weight_fields',
       (x) => {
         x.rows[0].meaning.weightPerUnit = null;
@@ -1150,6 +1146,26 @@ test('analysis validation reports privacy-safe reason codes for each domain rule
       (error) =>
         error.reasonCode === reasonCode && error.message === reasonCode,
       reasonCode,
+    );
+  }
+});
+test('receipt, display and normalized food names may differ by design', async () => {
+  const value = await openFixture();
+  const row = value.rows[0];
+  row.productName = '서울우1L';
+  row.name = '서울우유';
+  row.meaning.normalizedFoodName = '우유';
+  delete row.expiryDate;
+  const validated = validateAnalysis(value);
+  assert.equal(validated.rows[0].productName, '서울우1L');
+  assert.equal(validated.rows[0].name, '서울우유');
+  assert.equal(validated.rows[0].meaning.normalizedFoodName, '우유');
+  for (const invalidName of ['', '가'.repeat(61)]) {
+    const invalid = structuredClone(value);
+    invalid.rows[0].meaning.normalizedFoodName = invalidName;
+    assert.throws(
+      () => validateAnalysis(invalid),
+      (error) => error.reasonCode === 'invalid_product_meaning',
     );
   }
 });

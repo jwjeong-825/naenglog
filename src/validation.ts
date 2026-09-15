@@ -27,7 +27,6 @@ export type DraftValidationReason =
   | 'invalid_expiry_date'
   | 'invalid_storage'
   | 'invalid_product_meaning'
-  | 'normalized_food_name_mismatch'
   | 'invalid_weight_fields'
   | 'invalid_resolution';
 
@@ -63,10 +62,11 @@ export function assertDraft(value: unknown): asserts value is Draft {
   if (draft.meaning !== undefined) {
     if (!isRecord(draft.meaning)) draftFail('invalid_product_meaning');
     const m = draft.meaning as Record<string, unknown>;
-    if (m.normalizedFoodName !== draft.name)
-      draftFail('normalized_food_name_mismatch');
+    // productName is the receipt label, name is the inventory/display label,
+    // and normalizedFoodName is the canonical food identity. They may differ.
     if (
       m.version !== 1 ||
+      !text(m.normalizedFoodName, 60) ||
       !(m.brand === null || text(m.brand, 60)) ||
       !(m.packaging === null || text(m.packaging, 40)) ||
       !Array.isArray(m.storageCandidates) ||
