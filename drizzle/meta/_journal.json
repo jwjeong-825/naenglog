@@ -15,6 +15,13 @@
       "when": 1789014451626,
       "tag": "0001_short_angel",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789401000000,
+      "tag": "0002_receipt_test_recovery",
+      "breakpoints": true
     }
   ]
 }

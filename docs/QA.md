@@ -60,3 +60,6 @@ Sites 버전3 배포 상태 succeeded 확인(2026-09-14). 배포 소스 aabc4a89
 
 ## 2026-09-15 안전한 실패 진단
 52개 Mock 테스트/타입/lint/최종 build 통과. HTTP 메타데이터 허용 목록과 민감 원문 제외, network/JSON/model/usage/structured output 단계, 사전 취소 비용 환원과 전송후 timeout 차단 검증. 실제 API 호출과 장부 해제 없음.
+
+## 승인된1회 복구 검증
+복구 migration의 금액/이력 불변, 조건 불일치 거부, 재실행 무효와 여러 세션 동시 이미지 요청 중1개만 허용되는 것을 검증했다. 총54개 테스트 및 타입/lint/build exit0. 실제 모델 호출 없음.

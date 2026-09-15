@@ -73,3 +73,8 @@ Responses API analyze/interpret/briefing, strict schema 변환, 서버 키/Proje
 - HTTP status/allowlisted code·type·param/request ID 및 timeout/network/parse 단계 보존. 원문·secret 제외.
 - 전송 이전 확정 실패만 예약 환원, 불확실 usage와 운영 halted장부는 유지.
 - Mock 회귀52개, 복구 및1회 실측 절차 문서화. 실제 유료 호출 없음.
+
+## 2026-09-15 · 제한적 예산 복구
+- 명시 승인된 기존 장부 조건부 halted 해제 migration. 미확정 예약과 모든 과거 이력 보존.
+- 영수증 이미지1회만 원자적으로 허용하고 자동 briefing/추가 AI 차단.
+- 테스트54개/typecheck/lint/build 통과. 유료 호출 없음.

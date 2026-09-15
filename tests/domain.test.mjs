@@ -1563,3 +1563,52 @@ test('Budget persists timeout diagnostics without resetting uncertain costs', as
     sql.close();
   }
 });
+
+test('Approved receipt recovery preserves unknown costs and history and is idempotent', () => {
+  const sql=new DatabaseSync(':memory:');
+  try {
+    sql.exec('CREATE TABLE ai_budget(id TEXT PRIMARY KEY,snapshot TEXT NOT NULL,revision INTEGER NOT NULL)');
+    const original={total:12358,halted:true,entries:[{status:'uncertain',usage:null,cost:12358,reserved:12358,id:'prior'}]};
+    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(original),2);
+    const migration=readFileSync('drizzle/0002_receipt_test_recovery.sql','utf8');
+    sql.exec(migration);
+    const first=sql.prepare('SELECT * FROM ai_budget').get(), after=JSON.parse(first.snapshot);
+    assert.equal(after.halted,false);
+    assert.equal(after.total,original.total);
+    assert.deepEqual(after.entries,original.entries);
+    assert.equal(after.receiptTest.remaining,1);
+    assert.equal(first.revision,3);
+    sql.exec(migration);
+    assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(),first);
+    sql.prepare('UPDATE ai_budget SET snapshot=?,revision=2').run(JSON.stringify({...original,entries:[{status:'completed',usage:{inputTokens:1},cost:12358}]}));
+    sql.exec(migration);
+    assert.equal(JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot).halted,true);
+  } finally {sql.close();}
+});
+
+test('Receipt recovery allows only one globally reserved image and blocks background AI', async () => {
+  const {db,sql}=makeRepository();
+  try {
+    const ledger={total:12358,halted:false,entries:[],receiptTest:{remaining:1,recovery:'test'}};
+    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(ledger),3);
+    const budget=new AIBudget(db,openEnv());
+    let calls=0;
+    const work=async(o)=>{calls++;o.reportUsage({model:'gpt-5.4-mini',inputTokens:10,outputTokens:10});return {ok:true};};
+    await assert.rejects(budget.run('home','briefing',true,false,{},work));
+    await assert.rejects(budget.run('text','analyze',true,false,{},work));
+    assert.equal(calls,0);
+    const results=await Promise.allSettled([
+      budget.run('one','analyze',true,true,{image:'1'},work),
+      budget.run('two','analyze',true,true,{image:'2'},work),
+    ]);
+    assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
+    assert.equal(calls,1);
+    await assert.rejects(budget.run('three','analyze',true,true,{image:'3'},work));
+    assert.equal(calls,1);
+    const row=sql.prepare('SELECT snapshot FROM ai_budget WHERE id=?').get('championship-2026');
+    const saved=JSON.parse(row.snapshot);
+    assert.equal(saved.receiptTest.remaining,0);
+    assert.equal(saved.entries.length,1);
+    assert.ok(saved.total>=12358);
+  } finally {sql.close();}
+});

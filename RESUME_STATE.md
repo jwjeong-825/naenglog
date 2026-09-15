@@ -140,3 +140,6 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 최종 검증: npm test 52/52, npm run typecheck/lint/build 모두 exit0. 실제 유료 호출0, 운영 장부 변경0. 진단 어댑터 코드를 기록/배포하며 기존 halted는 유지한다.
 
 배포 완료: 진단 코드80ec6eb6b78e261b3835c161ffb650fee2b45e99를 GitHub main/Sites 소스에 push. Sites 버전5/env revision11 succeeded(appgdep_6aa8143b7a4c819198b9873dc8cd8ad3). 기존 공개 접근 유지. 배포 후 DB 읽기로 paid장부 revision2/halted=true/total12358(0.001원 단위)/entry1 불변 확인. 실제 AI 호출 없음. 다음은 Provider 청구 검토와 별도 승인된 복구 경로/단1회 실측. 현재 오류 원인은 미확정이며 새 요청부터 진단 가능.
+
+## 진행 중 · 승인된 영수증1회 테스트 준비
+운영 paid장부 revision2/halted=true/total12358/uncertain1 재확인. 0002 조건부 복구 migration과 receiptTest 원자적1회 제한 추가. 기존 감사/예약/확정과금 기록 보존. Mock 테스트54개/typecheck/lint/build 통과. 외부 호출0. 기존 v5를 임시 Mock으로 배포해 안전한 복구 단계 진행 중. 다음: 배포 성공→새코드+0002 배포→DB 확인→openai 복원 배포→haltedfalse/잔여1/총액불변 최종 확인. 장부 해제는 이번 사용자 요청으로 명시 승인됨.
