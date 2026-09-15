@@ -52,7 +52,7 @@ const clearFoods: Array<[RegExp, ClearFood]> = [
       normalizedFoodName: '계란',
       category: '달걀',
       storage: '냉장',
-      defaultUnit: '구',
+      defaultUnit: '개',
     },
   ],
   [
@@ -228,12 +228,13 @@ const clearFoods: Array<[RegExp, ClearFood]> = [
   ],
 ];
 const nonFoodPattern =
-  /키친타월|휴지|섬유\s*탈취제|탈취제|세제|샴푸|린스|화장지|건전지|청소용품|생활용품|위생용품/;
-const obsoleteFoodCountWarning =
-  /(?:at\s+most|top|maximum)\s*5|(?:상위|최대)\s*5\s*개|5\s*개(?:를|가|만)?\s*(?:제한|초과)|5\s*food/i;
+  /키친\s*타월|크리넥스|휴지|섬유\s*탈취제|페브리즈|탈취제|세제|샴푸|린스|화장지|건전지|청소\s*용품|생활\s*용품|위생\s*용품/;
+
+export const isNonFoodProductName = (productName: unknown) =>
+  typeof productName === 'string' && nonFoodPattern.test(productName);
 
 const clearFood = (productName: unknown) => {
-  if (typeof productName !== 'string' || nonFoodPattern.test(productName))
+  if (typeof productName !== 'string' || isNonFoodProductName(productName))
     return null;
   return clearFoods.find(([pattern]) => pattern.test(productName))?.[1] ?? null;
 };
@@ -253,7 +254,9 @@ const packageDetails = (productName: string, food: ClearFood) => {
   const unit =
     countUnit === '입' || countUnit === '개입'
       ? food.defaultUnit
-      : (countUnit ?? food.defaultUnit);
+      : countUnit === '구' && food.normalizedFoodName === '계란'
+        ? '개'
+        : (countUnit ?? food.defaultUnit);
   const weightPerUnit = weight ? Number(weight[1]) : null;
   const weightUnit = weight
     ? ({ g: 'g', kg: 'kg', ml: 'ml', l: 'L' } as const)[
@@ -487,9 +490,7 @@ export function normalizeAnalysisResult(
   )
     throw new Error('invalid_analysis_envelope');
 
-  const warnings = normalizeStrings(raw.warnings, 10, 300).filter(
-    (warning) => !obsoleteFoodCountWarning.test(warning),
-  );
+  const warnings = normalizeStrings(raw.warnings, 10, 300);
   const rows: Draft[] = [];
   const unresolved: PendingProduct[] = [];
   const excluded = (raw.excluded ?? [])
@@ -497,7 +498,7 @@ export function normalizeAnalysisResult(
     .filter((value): value is ExcludedProduct => value !== null);
 
   for (const value of [...raw.rows, ...raw.unresolved]) {
-    if (isRecord(value) && nonFoodPattern.test(String(value.productName))) {
+    if (isRecord(value) && isNonFoodProductName(value.productName)) {
       const notice = normalizeNotice(value, 'NON_FOOD');
       if (notice) excluded.push(notice as ExcludedProduct);
       continue;

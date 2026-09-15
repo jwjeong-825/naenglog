@@ -6,6 +6,7 @@ import type {
   ExcludedProduct,
 } from '../src/receipt-resolution';
 import { ProductReview } from './product-review';
+import { isNonFoodProductName } from '../src/analysis-normalization';
 /* Preview uses a local blob URL; analysis sends validated bytes to our server. */
 /* eslint-disable next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
@@ -288,31 +289,33 @@ export default function Home() {
   };
   const setRows = (next: Draft[]) =>
     setRowsRaw(
-      next.map((row) => {
-        if (!row.meaning) return row;
-        const old = rows.find((r) => r.productName === row.productName);
-        const changed =
-          old &&
-          (old.name !== row.name ||
-            old.quantity !== row.quantity ||
-            old.unit !== row.unit ||
-            old.storage !== row.storage ||
-            old.purchasedAt !== row.purchasedAt ||
-            old.expiryDate !== row.expiryDate);
-        return {
-          ...row,
-          meaning: {
-            ...row.meaning,
-            normalizedFoodName: row.name,
-            totalWeight:
-              row.meaning.weightPerUnit === null
-                ? null
-                : Math.round(row.meaning.weightPerUnit * row.quantity * 1000) /
-                  1000,
-            confirmed: changed ? false : row.meaning.confirmed,
-          },
-        };
-      }),
+      next
+        .filter((row) => !isNonFoodProductName(row.productName))
+        .map((row) => {
+          if (!row.meaning) return row;
+          const old = rows.find((r) => r.productName === row.productName);
+          const changed =
+            old &&
+            (old.name !== row.name ||
+              old.quantity !== row.quantity ||
+              old.unit !== row.unit ||
+              old.storage !== row.storage ||
+              old.purchasedAt !== row.purchasedAt ||
+              old.expiryDate !== row.expiryDate);
+          return {
+            ...row,
+            meaning: {
+              ...row.meaning,
+              totalWeight:
+                row.meaning.weightPerUnit === null
+                  ? null
+                  : Math.round(
+                      row.meaning.weightPerUnit * row.quantity * 1000,
+                    ) / 1000,
+              confirmed: changed ? false : row.meaning.confirmed,
+            },
+          };
+        }),
     );
   const list = state ? ranked(state) : [],
     item = state?.items.find((i) => i.id === selected),
@@ -345,7 +348,11 @@ export default function Home() {
       );
       if (controller.signal.aborted) return;
       setRows(result.rows);
-      setUnresolved(result.unresolved);
+      setUnresolved(
+        result.unresolved.filter(
+          (item) => !isNonFoodProductName(item.productName),
+        ),
+      );
       setExcluded(result.excluded ?? []);
       setNotice(
         [
@@ -897,6 +904,10 @@ export default function Home() {
                     <p className="footnote">
                       식품별 이름·수량·보관을 확인해주세요. 자세한 상품 정보는
                       펼쳐 수정할 수 있어요.
+                    </p>
+                    <p className="review-guidance">
+                      곧 드실 식품이나 장기 보관 관리가 필요 없는 품목은
+                      제외해도 괜찮아요.
                     </p>
                     {rows.map((d, n) => (
                       <div className="panel draft" key={n}>

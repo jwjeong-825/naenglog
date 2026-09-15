@@ -816,6 +816,16 @@ label [data-slot='select-trigger'] {
   font-size: 13px !important;
   color: var(--muted-foreground);
 }
+.management-hint,
+.review-guidance {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+  color: var(--muted-foreground);
+  font-size: 14px;
+  line-height: 1.5;
+}
 .product-confirm {
   flex-direction: row;
   align-items: flex-start;

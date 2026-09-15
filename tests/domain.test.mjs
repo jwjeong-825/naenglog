@@ -903,8 +903,11 @@ test('expired reservations remain charged after restart and inventory remains wr
 const { validateAnalysis } = await import(
   pathToFileURL(path.join(out, 'analysis.mjs'))
 );
-const { normalizeAnalysisResult } = await import(
+const { normalizeAnalysisResult, isNonFoodProductName } = await import(
   pathToFileURL(path.join(out, 'analysis-normalization.mjs'))
+);
+const { managementNeed } = await import(
+  pathToFileURL(path.join(out, 'product.mjs'))
 );
 const resolution = await import(
   pathToFileURL(path.join(out, 'receipt-resolution.mjs'))
@@ -1229,7 +1232,7 @@ test('clear Korean grocery labels are automatic FOOD while non-food stays hidden
   const fixture = await openFixture();
   const template = fixture.rows[0];
   const labels = [
-    ['무항생제 계란 10구', '무항생제 계란', '계란', 10, '구'],
+    ['무항생제 계란 10구', '무항생제 계란', '계란', 10, '개'],
     ['서울우유 1L', '서울우유', '우유', 1, '팩'],
     ['청정원 진간장 500ml', '청정원 진간장', '간장', 1, '병'],
     ['신라면 5입', '신라면', '라면', 5, '봉'],
@@ -1337,9 +1340,9 @@ test('egg tray and Korean multipack counts never become weight quantities', asyn
   fixture.unresolved = [];
   fixture.excluded = [];
   fixture.rows = [
-    ['계란 10구', 10, '구'],
-    ['계란 15구', 15, '구'],
-    ['계란 30구', 30, '구'],
+    ['계란 10구', 10, '개'],
+    ['계란 15구', 15, '개'],
+    ['계란 30구', 30, '개'],
     ['요구르트 4입', 4, '개'],
     ['햇반 6개입', 6, '개'],
   ].map(([productName]) => ({ ...structuredClone(template), productName }));
@@ -1349,13 +1352,46 @@ test('egg tray and Korean multipack counts never become weight quantities', asyn
   assert.deepEqual(
     result.rows.map(({ quantity, unit }) => [quantity, unit]),
     [
-      [10, '구'],
-      [15, '구'],
-      [30, '구'],
+      [10, '개'],
+      [15, '개'],
+      [30, '개'],
       [4, '개'],
       [6, '개'],
     ],
   );
+});
+test('display names stay product-specific while management guidance stays optional', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    '서울우유 1L',
+    '청정원 진간장 500ml',
+    '신라면 5입',
+    '비비고 왕교자',
+  ].map((productName) => ({ ...structuredClone(template), productName }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map(({ name, meaning }) => [name, meaning.normalizedFoodName]),
+    [
+      ['서울우유', '우유'],
+      ['청정원 진간장', '간장'],
+      ['신라면', '라면'],
+      ['비비고 왕교자', '만두'],
+    ],
+  );
+  assert.equal(managementNeed(result.rows[2]), 'low');
+  assert.equal(managementNeed(result.rows[0]), 'high');
+
+  const pageSource = readFileSync('app/page.tsx', 'utf8');
+  const reviewSource = readFileSync('app/product-review.tsx', 'utf8');
+  assert.doesNotMatch(pageSource, /normalizedFoodName:\s*row\.name/);
+  assert.match(pageSource, /장기 보관 관리가 필요 없는 품목/);
+  assert.match(reviewSource, /managementNeed\(draft\) === 'low'/);
+  assert.match(reviewSource, /장기 재고 관리가 필요하지 않다면 제외/);
 });
 test('eight clear foods remain eight FOOD rows without count overflow', async () => {
   const fixture = await openFixture();
@@ -1372,9 +1408,6 @@ test('eight clear foods remain eight FOOD rows without count overflow', async ()
   ].map((productName) => ({ ...structuredClone(template), productName }));
   fixture.unresolved = [];
   fixture.excluded = [];
-  fixture.warnings = [
-    '식품 항목이 5개를 초과해 일부 식품은 unresolved로 이동했습니다.',
-  ];
 
   const result = validateAnalysis(
     normalizeAnalysisResult(fixture, '2026-09-15'),
@@ -1386,7 +1419,6 @@ test('eight clear foods remain eight FOOD rows without count overflow', async ()
       (row) => row.meaning.resolution.classification === 'FOOD',
     ),
   );
-  assert.deepEqual(result.warnings, []);
 });
 test('ten clear foods all remain FOOD and the domain safety cap remains 50', async () => {
   const fixture = await openFixture();
@@ -1467,11 +1499,15 @@ test('mixed non-food products stay excluded and never enter user review cards', 
     ['크리넥스 키친타월 4롤', '페브리즈 섬유탈취제 370ml'].sort(),
   );
   assert.deepEqual(result.warnings, []);
+  assert.equal(isNonFoodProductName('크리넥스 키친 타월 4롤'), true);
+  assert.equal(isNonFoodProductName('페브리즈 섬유 탈취제 370ml'), true);
 
   const reviewSource = readFileSync('app/receipt-review.tsx', 'utf8');
+  const pageSource = readFileSync('app/page.tsx', 'utf8');
   assert.match(reviewSource, /excludedCount/);
   assert.doesNotMatch(reviewSource, /excluded\.map|onRestore|ExcludedProduct/);
   assert.doesNotMatch(reviewSource, /키친타월|섬유탈취제/);
+  assert.match(pageSource, /isNonFoodProductName/);
 });
 test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
   const cases = [
