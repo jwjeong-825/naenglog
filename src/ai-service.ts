@@ -50,6 +50,16 @@ export type ProviderDiagnostic = {
   networkError: boolean;
   networkCategory?: string;
   dispatched: boolean;
+  reasonCode?:
+    | 'domain_validation_failed'
+    | 'missing_resolution_method'
+    | 'invalid_resolution_method'
+    | 'invalid_classification'
+    | 'invalid_unresolved_shape'
+    | 'invalid_row_shape'
+    | 'invalid_meaning'
+    | 'invalid_confidence_or_score'
+    | 'post_validation_rule_failed';
 };
 /** Provider implementations return untrusted data; remote activation is server configured. */
 export interface AIProvider {
