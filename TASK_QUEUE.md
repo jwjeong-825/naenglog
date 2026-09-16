@@ -34,3 +34,13 @@
 단순push 전에 다른 최신 변경 발견. origin/main=3c45c95, Sitesv30=91f1f4e(회원schema0003이미적용), env13/public. 로컬구현65a1e5c보존→origin개선923696e병합→Sites변경현재병합중. 기존0003_certain_lethal_legion 원문보존, 미배포0003_member_accounts초안은0004_member_auth_hardening로이동. 기존 회원/토큰/재고 호환복사, 익명재고격리. 운영 paid장부는이미 revision83/halted=false/total880611 milliKRW; agent변경없음. 기존haltedtrue기록은과거상태! 현재누적/설정/장부변경금지,유료테스트금지. 다음:86개(이전67+원격회귀+호환)테스트/타입/lint/build→로컬브라우저재검증→병합커밋→GitHub/Sitespush→현재audience/public으로기존프로젝트재배포→비로그인화면/API401 확인.
 
 통합 최종 검증: 서버86/86, typecheck/lint/build 통과. 별도 로컬D1에0000~0004 적용 성공. 브라우저에서가입/빈재고/회원A등록/B미노출·타인item수정·레시피거절/자동로그인재접속/로그아웃토큰폐기/비회원401/클릭전AI0·Mock추천3개·상세/390px넘침없음 통과. 시크릿·클라이언트credential저장패턴0건. 운영회원·과금스냅샷보존 migration회귀통과. Git병합기록/배포만남음.
+
+## 배포 완료 · 2026-09-16 (이 항목이 최신)
+
+- 배포 코드: adf7f78c50933d8c5a697416176108e010e663ac. GitHubmain 및 Sites소스 push 성공.
+- Sites 버전31, deployment appgdep_6aaa6596652481918317739585d72757 succeeded. 기존 project appgprj_6a9fec0734708191a285871bf04d3f0e/public/env revision13 유지.
+- URL https://naenglog-fridge.vk4yrj847p.chatgpt.site . 로그인/회원가입/자동로그인 UI, 비로그인inventory401, 회원정보·레시피진입컨트롤번들, 모바일폭 검증. 운영 AI 요청0, 운영 테스트회원 생성0.
+- 서버86개/typecheck/lint/build 통과. 로컬 Worker 브라우저에서 회원A/B격리, 타인item수정/레시피거절, 자동로그인재접속, 로그아웃토큰무효화, 명시버튼Mock추천3개/상세 검증.
+- 운영0003 원문유지,0004 적용 확인(member_inventories/auth_attempts 존재). 기존 회원/세션/회원재고 호환보존, 익명inventories격리. 기존영수증20품목/일괄확인/D-Day개선도보존.
+- 운영 paid장부 배포 전후 revision83/halted=false/total880611 milliKRW 동일, 반환된snapshotprojection동일. Mock장부 revision23/0원 동일. 이번작업장부·누적사용량·환경설정·secret변경0, 실제유료호출0. 과거halted=true중단기록과다르므로 최신읽기값을기준으로할것.
+- 다음: 사용자가 본인기기에서 기존계정로그인/자동로그인 확인. 이메일·전화 소유검증/비밀번호찾기는 별도후속범위. 실제AI시험은 사용자별도승인 전수행금지. 문서배포기록커밋은 runtime코드변경없이GitHub에추가한다.
