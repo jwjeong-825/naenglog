@@ -52,6 +52,7 @@ import { ai } from '../src/ai-client';
 import { encodeImage } from '../src/image-input';
 import { AIServiceError, type Briefing } from '../src/ai-service';
 import {
+  ddayLabel,
   ranked,
   foods,
   id,
@@ -323,7 +324,7 @@ export default function Home() {
         }),
     );
   const list = state ? ranked(state) : [],
-    item = state?.items.find((i) => i.id === selected),
+    item = list.find((i) => i.id === selected),
     urgent = list.filter((i) => i.days >= 0 && i.days <= 2),
     expired = list.filter((i) => i.days < 0);
   const choose = (itemId: string) => {
@@ -418,12 +419,15 @@ export default function Home() {
       </span>
       <span
         className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
+        aria-label={
+          i.days < 0
+            ? `관리기한 ${Math.abs(i.days)}일 지남`
+            : i.days === 0
+              ? '관리기한 오늘'
+              : `관리기한 ${i.days}일 남음`
+        }
       >
-        {i.days < 0
-          ? `D+${Math.abs(i.days)}`
-          : i.days === 0
-            ? 'D-Day'
-            : `D-${i.days}`}
+        {ddayLabel(i.days)}
       </span>
       <ChevronRight size={17} />
     </button>
@@ -646,13 +650,15 @@ export default function Home() {
                         key={i.id}
                         className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
                       >
-                        {i.days < 0
-                          ? `D+${Math.abs(i.days)}`
-                          : i.days === 0
-                            ? 'D-Day'
-                            : `D-${i.days}`}
+                        {ddayLabel(i.days)}
                       </span>
                     ))}
+                  {item.days < 0 && (
+                    <p className="overdue-guidance">
+                      관리기한이 지났어요. 실제 제품 표시와 현재 상태를 확인해
+                      주세요.
+                    </p>
+                  )}
                   <p>
                     {item.quantity}
                     {item.unit} 남음 · {item.storage}
