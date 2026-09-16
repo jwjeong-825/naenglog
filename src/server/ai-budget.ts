@@ -56,7 +56,7 @@ export class BudgetError extends Error {
 }
 const exhausted =
   '대회 체험용 AI 사용 한도에 도달했습니다. 기존 냉장고 기능은 계속 이용할 수 있습니다.';
-const perSessionLimit: Record<Feature, number> = {
+export const AI_SESSION_LIMITS: Readonly<Record<Feature, number>> = {
   analyze: 20,
   briefing: 5,
   interpret: 15,
@@ -249,7 +249,7 @@ export class AIBudget {
         own.filter(
           (e) =>
             e.feature === feature && (feature !== 'briefing' || e.day === day),
-        ).length >= perSessionLimit[feature]
+        ).length >= AI_SESSION_LIMITS[feature]
       )
         throw new BudgetError(429, exhausted);
       if (
@@ -440,5 +440,76 @@ export class AIBudget {
         .slice(-50)
         .map(({ session: _session, key: _key, ...entry }) => entry),
     };
+  }
+  async diagnosticStatus(session: string) {
+    const row = await this.db
+      .prepare('SELECT snapshot FROM ai_budget WHERE id=?')
+      .bind('championship-2026')
+      .first<{ snapshot: string }>();
+    const ledger: Ledger = row
+      ? JSON.parse(row.snapshot)
+      : { total: 0, halted: false, entries: [] };
+    const day = new Date(this.now() + 9 * 3600000).toISOString().slice(0, 10);
+    const own = ledger.entries.filter((entry) => entry.session === session);
+    const analyzeSessionUsed = own.filter(
+      (entry) => entry.feature === 'analyze',
+    ).length;
+    const briefingSessionUsed = own.filter(
+      (entry) => entry.feature === 'briefing' && entry.day === day,
+    ).length;
+    const interpretSessionUsed = own.filter(
+      (entry) => entry.feature === 'interpret',
+    ).length;
+    const blockedReason = ledger.halted
+      ? 'halted'
+      : ledger.total >= 27000000
+        ? 'global_budget_limit'
+        : ledger.entries.length >= 1000
+          ? 'request_limit'
+          : analyzeSessionUsed >= AI_SESSION_LIMITS.analyze
+            ? 'analyze_session_limit'
+            : briefingSessionUsed >= AI_SESSION_LIMITS.briefing
+              ? 'briefing_session_limit'
+              : interpretSessionUsed >= AI_SESSION_LIMITS.interpret
+                ? 'interpret_session_limit'
+                : 'none';
+    const byFeature = Object.fromEntries(
+      (['analyze', 'interpret', 'briefing'] as const).map((feature) => [
+        feature,
+        ledger.entries.filter((entry) => entry.feature === feature).length,
+      ]),
+    );
+    return {
+      halted: ledger.halted,
+      estimatedKrw: ledger.total / 1000,
+      remainingKrw: Math.max(0, 27000 - ledger.total / 1000),
+      level:
+        ledger.halted ||
+        ledger.total >= 27000000 ||
+        ledger.entries.length >= 1000
+          ? 'blocked'
+          : ledger.total >= 25000000
+            ? 'strong-warning'
+            : ledger.total >= 20000000
+              ? 'warning'
+              : 'normal',
+      requests: ledger.entries.length,
+      byFeature,
+      inputTokens: ledger.entries.reduce(
+        (total, entry) => total + (entry.usage?.inputTokens ?? 0),
+        0,
+      ),
+      outputTokens: ledger.entries.reduce(
+        (total, entry) => total + (entry.usage?.outputTokens ?? 0),
+        0,
+      ),
+      analyzeSessionUsed,
+      analyzeSessionLimit: AI_SESSION_LIMITS.analyze,
+      briefingSessionUsed,
+      briefingSessionLimit: AI_SESSION_LIMITS.briefing,
+      interpretSessionUsed,
+      interpretSessionLimit: AI_SESSION_LIMITS.interpret,
+      blockedReason,
+    } as const;
   }
 }
