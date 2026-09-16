@@ -57,6 +57,7 @@ export class BudgetError extends Error {
 const exhausted =
   '대회 체험용 AI 사용 한도에 도달했습니다. 기존 냉장고 기능은 계속 이용할 수 있습니다.';
 export const AI_SESSION_LIMITS: Readonly<Record<Feature, number>> = {
+  recipes: 3,
   analyze: 20,
   briefing: 5,
   interpret: 15,
@@ -259,14 +260,7 @@ export class AIBudget {
         own.filter(
           (e) =>
             e.feature === feature && (feature !== 'briefing' || e.day === day),
-        ).length >=
-        (feature === 'analyze'
-          ? 4
-          : feature === 'briefing'
-            ? 5
-            : feature === 'recipes'
-              ? 3
-              : 15)
+        ).length >= AI_SESSION_LIMITS[feature]
       )
         throw new BudgetError(429, exhausted);
       if (
@@ -284,6 +278,7 @@ export class AIBudget {
           'busy',
         );
       ledger.total += reserved;
+      if (remote && ledger.receiptTest) ledger.receiptTest.remaining = 0;
       ledger.entries.push({
         id,
         key,

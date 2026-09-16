@@ -92,6 +92,53 @@ try {
     },
   });
   assert.equal(add.status(), 200);
+  const aItems = (
+    await (await context.request.get(origin + '/api/inventory')).json()
+  ).state.items;
+  const bContext = await browser.newContext();
+  const bRegister = await bContext.request.post(origin + '/api/auth', {
+    headers: { Origin: origin },
+    data: {
+      operation: 'register',
+      name: '격리 테스트',
+      email: `other${unique}@example.test`,
+      phone: '011' + unique,
+      password,
+      confirmPassword: password,
+    },
+  });
+  assert.equal(bRegister.status(), 201);
+  const bPage = await bContext.newPage();
+  await bPage.goto(origin);
+  await bPage
+    .getByRole('heading', { name: '내 냉장고', exact: true })
+    .waitFor();
+  assert.equal(
+    (await (await bContext.request.get(origin + '/api/inventory')).json()).state
+      .items.length,
+    0,
+  );
+  const forged = await bContext.request.post(origin + '/api/inventory', {
+    headers: { Origin: origin },
+    data: {
+      kind: 'command',
+      revision: 0,
+      userId: snapshot.state.user.id,
+      command: {
+        id: 'forged-' + unique,
+        itemId: aItems[0].id,
+        action: 'consume',
+        quantity: 1,
+      },
+    },
+  });
+  assert.equal(forged.status(), 400);
+  const foreignRecipe = await bContext.request.post(origin + '/api/ai', {
+    headers: { Origin: origin },
+    data: { operation: 'recipes', itemIds: aItems.map((i) => i.id) },
+  });
+  assert.equal(foreignRecipe.status(), 400);
+  await bContext.close();
   await page.reload();
   await page.getByRole('heading', { name: '내 냉장고', exact: true }).waitFor();
   assert.equal(modelCalls, 0);
@@ -124,7 +171,7 @@ try {
   assert.ok(
     state.cookies.some(
       (c) =>
-        c.name === 'naenglog_member' &&
+        c.name === 'naenglog_auth' &&
         c.httpOnly &&
         c.expires > Date.now() / 1000 + 20 * 86400,
     ),

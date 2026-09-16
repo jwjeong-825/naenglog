@@ -192,7 +192,7 @@ export function MemberAccess({
             name="password"
             type="password"
             autoComplete={register ? 'new-password' : 'current-password'}
-            minLength={12}
+            minLength={register ? 12 : 1}
             maxLength={72}
             required
           />
@@ -232,5 +232,71 @@ export function MemberAccess({
         </button>
       </form>
     </main>
+  );
+}
+
+export function PasswordChange() {
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
+  return (
+    <details className="daily-note">
+      <summary>비밀번호 변경</summary>
+      <form
+        onSubmit={async (e) => {
+          e.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setError('');
+          const form = e.currentTarget;
+          const values = Object.fromEntries(new FormData(form));
+          try {
+            await accountRequest({ ...values, operation: 'password' });
+            form.reset();
+            window.dispatchEvent(new Event('naenglog-auth-required'));
+          } catch (e) {
+            setError(e instanceof Error ? e.message : '변경하지 못했어요.');
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <label>
+          현재 비밀번호
+          <input
+            name="currentPassword"
+            type="password"
+            autoComplete="current-password"
+            required
+          />
+        </label>
+        <label>
+          새 비밀번호
+          <input
+            name="newPassword"
+            type="password"
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={72}
+            required
+          />
+        </label>
+        <label>
+          새 비밀번호 확인
+          <input
+            name="confirmPassword"
+            type="password"
+            autoComplete="new-password"
+            minLength={12}
+            maxLength={72}
+            required
+          />
+        </label>
+        <p>변경하면 모든 기기에서 로그아웃돼요.</p>
+        {error && <p role="alert">{error}</p>}
+        <button className="secondary" disabled={busy}>
+          비밀번호 변경하기
+        </button>
+      </form>
+    </details>
   );
 }

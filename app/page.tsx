@@ -1,5 +1,5 @@
 'use client';
-import { MemberAccess } from './member-access';
+import { MemberAccess, PasswordChange } from './member-access';
 import type { Member } from '../src/server/auth';
 import { RecipeResults } from './recipe-results';
 import { selectedIngredients, type Recipe } from '../src/recipes';
@@ -511,6 +511,7 @@ function MemberHome({
                   <dd>{user.phone}</dd>
                 </dl>
                 <p>이 계정의 냉장고만 연결되어 있어요.</p>
+                <PasswordChange />
                 <button
                   className="secondary"
                   disabled={busy}

@@ -1,5 +1,7 @@
 # 제품 명세
 
+> 최신 상태 · 2026-09-16: GitHub의 영수증20품목/정규화/일괄확인/D-Day 개선과 Sites v30의 기존 회원 스키마를 통합했다. 기존0003은 변경하지 않고0004로 회원 snapshot을 보존 복사한다. 기존 bcrypt cost10 계정/43자 토큰도 유효기간 내 호환하며 신규·변경 비밀번호는 cost12다. 쿠키 이름은 기존 naenglog_auth를 유지한다. 운영 장부는 읽기에서 revision83/halted=false 확인; 이번 작업에서 해제하거나 유료 호출하지 않았다. 과거 halted=true/잔여0 기록은 당시 이력이며 현재 상태로 해석하지 않는다. 기존 이미지20회/브리핑5회/명령15회 제한 및27,000원 guard 유지, 신규레시피3회.
+
 ## 사용자 흐름
 회원가입/로그인 → 빈 회원 냉장고 → 구매 추가(영수증/온라인 캡처/직접 입력) → 설정에 따른 Mock/OpenAI 분석 → 이름·수량·단위·구매일·보관 확인/수정 → 등록 → 홈 우선순위 → 자연어 명령 확인 → 재고와 거래 원장 동시 갱신.
 Mock에서는 이미지를 실제로 해석하지 않는다. OpenAI 활성화 시 서버에서 실제 이미지 의미 분석을 요청한다. 미리보기와 Mock 샘플 결과를 명확히 구분한다. 분석 요청 시 이미지 바이트를 서비스 서버로 전송하며 영구 저장하지 않는다. Mock에서는 외부 AI로 전송하지 않는다.
@@ -86,5 +88,5 @@ AI_PROVIDER=openai로 서버 어댑터를 선택하며 외부 UI 계약은 mode=
 - 서버가 sessions → users.id로 소유자를 결정한다. member_inventories.user_id FK의 원자적 snapshot에 items/purchases/transactions/analyses와 각 userId를 보관한다. 클라이언트 userId를 믿지 않는다. 새 회원은 빈 재고이며 legacy inventories/localStorage를 자동 연결하지 않는다.
 - 냉장고에서1~10개 선택 → 명시적 추천 버튼 → 최소3개 대안 → 상세 조리 순서. 기한 지난/0개/타 회원 ID는 서버에서 거절한다. 선택 항목의 ID·이름·수량·단위·보관·기한만 Provider에 전달한다. 반환 수량은 각 대안별 현재 재고 이하이고 추가 재료를 분리한다. AI는 재고를 변경하지 않는다.
 - 페이지 진입/재고 변경 시 자동 유료 briefing 호출 제거. 기본 규칙 보관 안내는 즉시 제공한다. 레시피도 클릭 전 AI 호출0. Mock은 시연 예시라고 표시한다.
-- recipes는 기존 전역 예약/usage/동시성/캐시/retry0 경계 안에서 회원당 누적3회, 최대출력3000토큰. paid ledger halted/remaining0은 그대로 유지하여 운영 유료 추천은 현재 차단 상태다. 이번 구현은 해제 승인이 아니다.
-- migration0003은 users/sessions/member_inventories/auth_attempts만 추가한다. 기존 재고와 과금 장부는 삭제·수정하지 않는다. 상세 보안·운영 제한은 AUTH_AND_RECIPES.md.
+- recipes는 기존 전역 예약/usage/동시성/캐시/retry0 경계 안에서 회원당 누적3회, 최대출력3000토큰. 운영 장부는 읽기만 한다. 최신 관측값은 revision83/halted=false이며 이번 작업에서 해제하지 않았다. 실제 유료 추천 테스트는 하지 않는다.
+- 운영 migration0003은 보존하고0004에서 member_inventories/auth_attempts 및 sessions.persistent를 추가한다. 기존 재고와 과금 장부는 삭제·수정하지 않는다. 상세 보안·운영 제한은 AUTH_AND_RECIPES.md.

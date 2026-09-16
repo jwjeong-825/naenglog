@@ -2930,3 +2930,151 @@ test('OpenAI recipes send only selected inventory, validate strict structure, an
   );
   await assert.rejects(malformed.recipes(items, openOptions('recipes')));
 });
+
+test('v30 migration preserves real member inventory and legacy sessions without touching anonymous data or budget', async () => {
+  const sql = new DatabaseSync(':memory:');
+  try {
+    for (const file of readdirSync('drizzle')
+      .filter((f) => f.endsWith('.sql') && !f.startsWith('0004'))
+      .sort())
+      sql.exec(readFileSync('drizzle/' + file, 'utf8'));
+    const { hash } = await import('bcryptjs');
+    const { tokenHash } = await import(
+      pathToFileURL(path.join(out, 'server/auth.mjs'))
+    );
+    const now = new Date().toISOString(),
+      expires = new Date(Date.now() + 20 * 86400000).toISOString(),
+      rawToken = 'L'.repeat(43);
+    sql
+      .prepare('INSERT INTO users VALUES (?,?,?,?,?,?,?)')
+      .run(
+        'existing',
+        'Existing',
+        'existing@example.test',
+        '01012345678',
+        await hash('Old-pass1!', 10),
+        now,
+        now,
+      );
+    sql
+      .prepare('INSERT INTO sessions VALUES (?,?,?,?,?,?)')
+      .run(
+        'existing-session',
+        'existing',
+        await tokenHash(rawToken),
+        expires,
+        now,
+        now,
+      );
+    const old = d.seed();
+    old.user = { id: 'existing', mode: 'account' };
+    sql
+      .prepare('INSERT INTO user_inventories VALUES (?,?,?,?,?)')
+      .run('existing', JSON.stringify(old), 7, now, now);
+    sql
+      .prepare('INSERT INTO inventories VALUES (?,?,?,?,?)')
+      .run('anonymous', JSON.stringify(d.seed()), 1, now, now);
+    const ledger = JSON.stringify({
+      total: 880611,
+      halted: false,
+      entries: [{ id: 'keep' }],
+    });
+    sql
+      .prepare('INSERT INTO ai_budget VALUES (?,?,?)')
+      .run('championship-2026', ledger, 83);
+    sql.exec(readFileSync('drizzle/0004_member_auth_hardening.sql', 'utf8'));
+    const db = databaseFor(sql),
+      auth = new AuthStore(db),
+      repo = new InventoryRepository(db, 'mock', true);
+    assert.equal(
+      (await auth.GET(memberGet('naenglog_auth=' + rawToken))).status,
+      200,
+    );
+    const migrated = await repo.find('existing');
+    assert.equal(migrated.revision, 7);
+    assert.deepEqual(migrated.state.items, old.items);
+    assert.equal(migrated.state.user.mode, 'member');
+    assert.equal(
+      sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot,
+      ledger,
+    );
+    assert.equal(
+      sql.prepare('SELECT revision FROM ai_budget').get().revision,
+      83,
+    );
+    assert.equal(sql.prepare('SELECT count(*) n FROM inventories').get().n, 1);
+    const login = await auth.POST(
+      authRequest({
+        operation: 'login',
+        identifier: 'existing@example.test',
+        password: 'Old-pass1!',
+      }),
+    );
+    assert.equal(
+      login.status,
+      200,
+      'Existing shorter v30 password stays usable',
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('password change requires current password and revokes all sessions', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db);
+    const first = await auth.POST(authRequest(credentials()));
+    const cookie = cookieOf(first);
+    const second = await auth.POST(
+      authRequest({
+        operation: 'login',
+        identifier: 'member1@example.test',
+        password: credentials().password,
+      }),
+    );
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest(
+            {
+              operation: 'password',
+              currentPassword: 'wrong',
+              newPassword: 'New-test-password-2026',
+            },
+            cookie,
+          ),
+        )
+      ).status,
+      401,
+    );
+    const changed = await auth.POST(
+      authRequest(
+        {
+          operation: 'password',
+          currentPassword: credentials().password,
+          newPassword: 'New-test-password-2026',
+          confirmPassword: 'New-test-password-2026',
+        },
+        cookie,
+      ),
+    );
+    assert.equal(changed.status, 200);
+    assert.match(changed.headers.get('set-cookie'), /Max-Age=0/);
+    assert.equal((await auth.GET(memberGet(cookie))).status, 401);
+    assert.equal((await auth.GET(memberGet(cookieOf(second)))).status, 401);
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest({
+            operation: 'login',
+            identifier: 'member1@example.test',
+            password: 'New-test-password-2026',
+          }),
+        )
+      ).status,
+      200,
+    );
+  } finally {
+    sql.close();
+  }
+});

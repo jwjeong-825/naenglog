@@ -1,5 +1,7 @@
 # OpenAI Provider 설정
 
+> 최신 상태 · 2026-09-16: GitHub의 영수증20품목/정규화/일괄확인/D-Day 개선과 Sites v30의 기존 회원 스키마를 통합했다. 기존0003은 변경하지 않고0004로 회원 snapshot을 보존 복사한다. 기존 bcrypt cost10 계정/43자 토큰도 유효기간 내 호환하며 신규·변경 비밀번호는 cost12다. 쿠키 이름은 기존 naenglog_auth를 유지한다. 운영 장부는 읽기에서 revision83/halted=false 확인; 이번 작업에서 해제하거나 유료 호출하지 않았다. 과거 halted=true/잔여0 기록은 당시 이력이며 현재 상태로 해석하지 않는다. 기존 이미지20회/브리핑5회/명령15회 제한 및27,000원 guard 유지, 신규레시피3회.
+
 ## 현재 상태와 경계
 
 OpenAI Responses API 서버 어댑터를 구현했다. 기본값은 AI_PROVIDER=mock. 실제 키 입력·계정 설정·외부 AI 호출·과금 실측은 수행하지 않았다. 아래 설정을 사용자가 완료해야 실제 인식이 활성화된다.
@@ -109,7 +111,7 @@ network-diagnostics는 예외 원문을 출력하지 않고 DNS/TLS/refused/rese
 
 ## 2026-09-16 · 인증/레시피와 런타임 수정
 
-/api/ai는 이제 naenglog_member 세션을 검증한다. quota/cache 키는 브라우저별 익명 토큰 대신 서버 회원 ID를 사용하므로 같은 계정의 재로그인/기기 변경으로 횟수가 초기화되지 않는다. 기존 paid 장부 자체는 동일하게 유지한다. recipes는 클릭 시만 실행하며 최대입력6000/출력3000, 회원누적3회, 재시도0. 선택 재료만 Responses JSON schema로 전달하고 최소3개 결과·소유 ID·수량을 검증한다. 홈 안내는 로컬 규칙이므로 자동 유료 요청이 없다.
+/api/ai는 이제 naenglog_auth 세션을 검증한다. quota/cache 키는 브라우저별 익명 토큰 대신 서버 회원 ID를 사용하므로 같은 계정의 재로그인/기기 변경으로 횟수가 초기화되지 않는다. 기존 paid 장부 자체는 동일하게 유지한다. recipes는 클릭 시만 실행하며 최대입력6000/출력3000, 회원누적3회, 재시도0. 선택 재료만 Responses JSON schema로 전달하고 최소3개 결과·소유 ID·수량을 검증한다. 홈 안내는 로컬 규칙이므로 자동 유료 요청이 없다.
 
 Sites v7에서 HTTPS example.com은200, OpenAI 호스트는 manual모드421을 반환했으나 redirect:error Request 구성은 즉시 거절되었다. 이번 소스는 redirect:manual을 사용하며3xx를 따라가지 않고 실패 처리한다. 이는 모델 사용 성공이나 권한 검증을 의미하지 않는다. 키 없는 /v1/models GET만 무료 진단에 추가했다.
 

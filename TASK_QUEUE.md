@@ -29,3 +29,8 @@
 현재 요청은 회원가입/로그인/자동로그인, 회원별 재고 완전 분리, 선택 재료 레시피다. 구현 및 서버 회귀67개 통과. 로컬 Worker Mock 브라우저검증 진행 중. bcrypt3.0.3, migration0003 신규회원별 snapshot, legacy자동import차단, 클릭시만 recipes/provider/budget 경로. paid장부 halted=true/잔여0 유지, 절대 해제·유료호출 금지. network manual수정도 이번 소스에 포함. 다음: 브라우저검증 → 최종 type/lint/build → 민감정보검사 → GitHubmain/Sites소스 push → 현재 audience 유지 재배포 → 공개 비로그인401 확인. 환경키 변경 불필요.
 
 로컬 Worker/Mock 브라우저 검증 통과: 가입→빈 냉장고→재료3개→추천3개→상세/모바일390px넘침없음, 재접속로그인유지, 로그아웃세션무효화, 익명재고401. 페이지/선택/상세 자동모델호출0, 추천버튼에서만1회(Mock). 최종 검증 후Git/배포 예정.
+
+## 재개 후 최신 운영 대조 · 2026-09-16
+단순push 전에 다른 최신 변경 발견. origin/main=3c45c95, Sitesv30=91f1f4e(회원schema0003이미적용), env13/public. 로컬구현65a1e5c보존→origin개선923696e병합→Sites변경현재병합중. 기존0003_certain_lethal_legion 원문보존, 미배포0003_member_accounts초안은0004_member_auth_hardening로이동. 기존 회원/토큰/재고 호환복사, 익명재고격리. 운영 paid장부는이미 revision83/halted=false/total880611 milliKRW; agent변경없음. 기존haltedtrue기록은과거상태! 현재누적/설정/장부변경금지,유료테스트금지. 다음:86개(이전67+원격회귀+호환)테스트/타입/lint/build→로컬브라우저재검증→병합커밋→GitHub/Sitespush→현재audience/public으로기존프로젝트재배포→비로그인화면/API401 확인.
+
+통합 최종 검증: 서버86/86, typecheck/lint/build 통과. 별도 로컬D1에0000~0004 적용 성공. 브라우저에서가입/빈재고/회원A등록/B미노출·타인item수정·레시피거절/자동로그인재접속/로그아웃토큰폐기/비회원401/클릭전AI0·Mock추천3개·상세/390px넘침없음 통과. 시크릿·클라이언트credential저장패턴0건. 운영회원·과금스냅샷보존 migration회귀통과. Git병합기록/배포만남음.

@@ -84,3 +84,5 @@ DNS/TLS/연결/refused/reset/런타임/redirect/요청구성 오류 분류 추�
 
 ## 2026-09-16 · 회원 계정 및 선택 재료 레시피
 회원 로그인·30일 자동로그인·로그아웃, bcrypt cost12, 서버 세션 기반 소유권, 빈 회원 냉장고와 legacy 격리, 선택 재료 레시피 목록/상세/검증/예산 경계. 자동 유료 briefing 제거. Sites redirect:error 비호환을 manual로 수정. migration0003은 회원 테이블만 추가, 운영 장부 해제나 유료 호출 없음.
+
+- 배포 전 최신 GitHub 및 Sitesv30 계정 변경 통합. 기배포0003 유지 및0004 호환 migration으로 기존 회원/세션/재고 보존. 기존 영수증20품목·일괄확인·D-Day·안전 진단 유지. 비밀번호 변경 시 전체세션 무효화. 관측된운영장부rev83/haltedfalse에 쓰기없음.

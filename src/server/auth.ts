@@ -3,7 +3,7 @@ import type { Database } from './repository';
 import { isRecord } from '../validation';
 
 export type Member = { id: string; name: string; email: string; phone: string };
-const cookieName = 'naenglog_member';
+const cookieName = 'naenglog_auth';
 const generic = '이메일/전화번호 또는 비밀번호가 올바르지 않아요.';
 const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) =>
@@ -22,7 +22,9 @@ export function memberToken(request: Request) {
     .map((x) => x.trim())
     .find((x) => x.startsWith(cookieName + '='))
     ?.slice(cookieName.length + 1);
-  return value && /^[a-f0-9]{64}$/.test(value) ? value : null;
+  return value && /^(?:[a-f0-9]{64}|[A-Za-z0-9_-]{43})$/.test(value)
+    ? value
+    : null;
 }
 const phone = (value: string) =>
   value.replace(/[\s()-]/g, '').replace(/^\+82/, '0');
@@ -50,7 +52,7 @@ export class AuthStore {
       .prepare(
         'SELECT u.id,u.name,u.email,u.phone FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',
       )
-      .bind(await tokenHash(token), this.now())
+      .bind(await tokenHash(token), new Date(this.now()).toISOString())
       .first<Member>();
   }
   private async throttle(
@@ -124,6 +126,69 @@ export class AuthStore {
       }
       if (!isRecord(body))
         return json({ error: '입력값을 확인해주세요.' }, 400);
+      const legacyOperation: Record<string, string> = {
+        signup: 'register',
+        login: 'login',
+        logout: 'logout',
+        password: 'password',
+      };
+      body.operation ??=
+        legacyOperation[new URL(request.url).pathname.split('/').at(-1) ?? ''];
+      body.identifier ??= body.email;
+      body.remember ??= body.autoLogin;
+      body.confirmPassword ??= body.passwordConfirmation;
+      if (body.operation === 'password') {
+        const user = await this.member(request);
+        if (!user) return json({ error: '로그인이 필요해요.' }, 401);
+        if (!(await this.throttle(request, user.email, false)))
+          return json(
+            { error: '요청이 많아요. 15분 후 다시 시도해주세요.' },
+            429,
+          );
+        const next = body.newPassword,
+          current = body.currentPassword;
+        if (
+          typeof next !== 'string' ||
+          next.length < 12 ||
+          encoder.encode(next).length > 72 ||
+          /^(.)\1+$/.test(next) ||
+          typeof current !== 'string' ||
+          encoder.encode(current).length > 72
+        )
+          return json(
+            { error: '새 비밀번호는 12자 이상, UTF-8 72바이트 이하여야 해요.' },
+            400,
+          );
+        if (body.confirmPassword !== undefined && body.confirmPassword !== next)
+          return json({ error: '새 비밀번호 확인이 일치하지 않아요.' }, 400);
+        const row = await this.db
+          .prepare('SELECT password_hash FROM users WHERE id=?')
+          .bind(user.id)
+          .first<{ password_hash: string }>();
+        if (!row || !(await compare(current, row.password_hash)))
+          return json({ error: '현재 비밀번호를 확인해주세요.' }, 401);
+        const result = await this.db
+          .prepare(
+            'UPDATE users SET password_hash=?,updated_at=? WHERE id=? AND password_hash=?',
+          )
+          .bind(
+            await hash(next, 12),
+            new Date(this.now()).toISOString(),
+            user.id,
+            row.password_hash,
+          )
+          .run();
+        if (result.meta.changes !== 1)
+          return json(
+            { error: '계정이 변경됐어요. 다시 로그인해주세요.' },
+            409,
+          );
+        await this.db
+          .prepare('DELETE FROM sessions WHERE user_id=?')
+          .bind(user.id)
+          .run();
+        return json({ ok: true }, 200, cookie(request, '', 0));
+      }
       if (body.operation === 'logout') {
         const token = memberToken(request);
         if (token)
@@ -150,7 +215,7 @@ export class AuthStore {
         );
       if (
         typeof body.password !== 'string' ||
-        body.password.length < 12 ||
+        body.password.length < (register ? 12 : 1) ||
         encoder.encode(body.password).length > 72
       )
         return json(
@@ -187,7 +252,7 @@ export class AuthStore {
         user = { id: crypto.randomUUID(), name, email, phone: mobile };
         const result = await this.db
           .prepare(
-            'INSERT OR IGNORE INTO users(id,name,email,phone,password_hash,created_at) VALUES (?,?,?,?,?,?)',
+            'INSERT OR IGNORE INTO users(id,name,email,phone,password_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
           )
           .bind(
             user.id,
@@ -195,6 +260,7 @@ export class AuthStore {
             email,
             mobile,
             passwordHash,
+            new Date(this.now()).toISOString(),
             new Date(this.now()).toISOString(),
           )
           .run();
@@ -232,18 +298,19 @@ export class AuthStore {
         token = random();
       await this.db
         .prepare('DELETE FROM sessions WHERE expires_at<?')
-        .bind(this.now())
+        .bind(new Date(this.now()).toISOString())
         .run();
       await this.db
         .prepare(
-          'INSERT INTO sessions(id,user_id,token_hash,expires_at,persistent,created_at) VALUES (?,?,?,?,?,?)',
+          'INSERT INTO sessions(id,user_id,token_hash,expires_at,persistent,created_at,last_used_at) VALUES (?,?,?,?,?,?,?)',
         )
         .bind(
           crypto.randomUUID(),
           user.id,
           await tokenHash(token),
-          this.now() + ttl * 1000,
+          new Date(this.now() + ttl * 1000).toISOString(),
           persistent ? 1 : 0,
+          new Date(this.now()).toISOString(),
           new Date(this.now()).toISOString(),
         )
         .run();
