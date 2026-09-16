@@ -3,7 +3,6 @@ import { useState } from 'react';
 import {
   confirmCandidate,
   type PendingProduct,
-  type ExcludedProduct,
 } from '../src/receipt-resolution';
 import type { Draft } from '../src/domain';
 function ReviewItem({
@@ -108,34 +107,24 @@ function ReviewItem({
 }
 export function ReceiptReview({
   pending,
-  excluded,
+  excludedCount,
   onResolve,
   onDismiss,
-  onRestore,
 }: {
   pending: PendingProduct[];
-  excluded: ExcludedProduct[];
+  excludedCount: number;
   onResolve: (index: number, draft: Draft) => void;
   onDismiss: (index: number) => void;
-  onRestore: (index: number) => void;
 }) {
   return (
     <section
       className="receipt-classification"
       aria-label="구매 품목 분류 확인"
     >
-      {excluded.length > 0 && (
-        <details className="excluded-products">
-          <summary>비식품으로 제외한 품목 {excluded.length}개</summary>
-          {excluded.map((item, i) => (
-            <div key={item.productName + ':' + i}>
-              <p>
-                {item.productName} · {item.reason}
-              </p>
-              <button onClick={() => onRestore(i)}>식품인지 다시 확인</button>
-            </div>
-          ))}
-        </details>
+      {excludedCount > 0 && (
+        <p className="footnote">
+          비식품 {excludedCount}개를 자동으로 제외했습니다.
+        </p>
       )}
       {pending.length > 0 && (
         <>

@@ -18,7 +18,9 @@ for (const name of [
   'recipes',
   'server/auth',
   'analysis',
+  'analysis-normalization',
   'receipt-resolution',
+  'review-confirmation',
   'server/ai-budget',
   'server/ai-budget-admin',
   'image-input',
@@ -63,6 +65,32 @@ const { ai, buildMockBriefing } = await import(
   pathToFileURL(path.join(out, 'ai.mjs'))
 );
 const storage = await import(pathToFileURL(path.join(out, 'storage.mjs')));
+const reviewConfirmation = await import(
+  pathToFileURL(path.join(out, 'review-confirmation.mjs'))
+);
+test('bulk review confirmation updates real state and still allows individual changes', async () => {
+  const result = await ai.analyzeDetailed({ source: '영수증' });
+  const rows = result.rows.slice(0, 2);
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed(rows), false);
+
+  const confirmed = reviewConfirmation.confirmAllReviewRows(rows);
+  assert.ok(confirmed.every((row) => row.meaning.confirmed));
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed(confirmed), true);
+  assert.equal(reviewConfirmation.allReviewRowsConfirmed([]), false);
+
+  const individuallyUnchecked = confirmed.map((row, index) =>
+    index === 0
+      ? {
+          ...row,
+          meaning: { ...row.meaning, confirmed: false },
+        }
+      : row,
+  );
+  assert.equal(
+    reviewConfirmation.allReviewRowsConfirmed(individuallyUnchecked),
+    false,
+  );
+});
 test('demo briefing prioritizes mushrooms and never includes expired items in menu', () => {
   const s = d.seed();
   assert.equal(d.ranked(s)[0].name, '버섯');
@@ -503,6 +531,67 @@ test('calendar dates agree at Korean midnight regardless of server timezone', ()
   assert.equal(d.calendarDate('2026-09-08T15:00:00Z'), '2026-09-09');
   assert.equal(d.calendarDate('2026-09-08T14:59:59Z'), '2026-09-08');
 });
+test('D-day labels and urgency use expectedAt instead of purchase age', () => {
+  assert.equal(d.ddayLabel(3), 'D-3');
+  assert.equal(d.ddayLabel(0), 'D-Day');
+  assert.equal(d.ddayLabel(-2), 'D+2');
+
+  const state = d.seed();
+  const today = d.today();
+  const oldPurchase = d.addDays(today, -500);
+  state.items = [
+    {
+      ...state.items[0],
+      id: 'future-despite-old-purchase',
+      purchasedAt: oldPurchase,
+      expiryDate: d.addDays(today, 3),
+      expectedAt: oldPurchase,
+    },
+    {
+      ...state.items[0],
+      id: 'overdue',
+      purchasedAt: today,
+      expiryDate: d.addDays(today, -2),
+      expectedAt: today,
+    },
+  ];
+  const ranked = d.ranked(state);
+  assert.equal(ranked[0].id, 'overdue');
+  assert.equal(ranked[0].days, -2);
+  assert.equal(ranked[1].days, 3);
+  assert.equal(ranked[1].expectedAt, d.addDays(today, 3));
+});
+test('expected dates use normalized food identity, storage and printed expiry', () => {
+  const purchasedAt = '2026-09-01';
+  const template = {
+    ...d.seed().analyses[0].result[0],
+    meaning: { normalizedFoodName: '버섯' },
+  };
+  const cases = [
+    ['무항생제 계란', '계란', '냉장', 21],
+    ['서울우유', '우유', '냉장', 7],
+    ['풀무원 국산콩 두부', '두부', '냉장', 5],
+    ['신선한 대파', '대파', '냉장', 7],
+  ];
+  for (const [name, normalizedFoodName, storage, days] of cases) {
+    const draft = structuredClone(template);
+    draft.name = name;
+    draft.purchasedAt = purchasedAt;
+    draft.storage = storage;
+    draft.expiryDate = undefined;
+    draft.meaning.normalizedFoodName = normalizedFoodName;
+    assert.equal(d.expected(draft), d.addDays(purchasedAt, days));
+    assert.equal(draft.name, name);
+  }
+
+  const printed = structuredClone(template);
+  printed.name = '서울우유';
+  printed.meaning.normalizedFoodName = '우유';
+  printed.purchasedAt = purchasedAt;
+  printed.storage = '냉장';
+  printed.expiryDate = '2026-10-15';
+  assert.equal(d.expected(printed), '2026-10-15');
+});
 
 test('product semantics preserve packaging, composite meals and explicit review', async () => {
   const rows = await ai.analyze({
@@ -641,6 +730,12 @@ test('server AI requires own session, validates image bytes, and runs without ex
     assert.equal(body.result.rows.length, 4);
     assert.ok(body.result.warnings.length);
     assert.ok(body.result.rows.every((r) => !r.meaning.confirmed));
+    const online = await send({
+      operation: 'analyze',
+      input: { source: '온라인 캡처', image },
+    });
+    assert.equal(online.status, 200);
+    assert.ok((await online.json()).result.rows.length > 0);
     const move = await send({
       operation: 'interpret',
       text: '닭가슴살 냉동으로 옮겼어',
@@ -725,7 +820,7 @@ function databaseFor(sql) {
     }),
   };
 }
-const { AIBudget } = await import(
+const { AIBudget, ANALYSIS_CACHE_VERSION, fingerprint } = await import(
   pathToFileURL(path.join(out, 'server/ai-budget.mjs'))
 );
 const budgetEnv = (now) => ({
@@ -751,18 +846,18 @@ test('budget cache, trial quota, mock isolation and admin protection', async () 
     calls++;
     return { ok: true };
   };
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < 20; i++) {
     await b.run('one', 'analyze', false, true, i, work);
     now += 4000;
   }
   await b.run('one', 'analyze', false, true, 0, work);
-  assert.equal(calls, 4);
+  assert.equal(calls, 20);
   await assert.rejects(
-    b.run('one', 'analyze', false, true, 5, work),
+    b.run('one', 'analyze', false, true, 20, work),
     (e) => e.status === 429,
   );
   await b.run('two', 'analyze', false, true, 0, work);
-  assert.equal(calls, 5);
+  assert.equal(calls, 21);
   assert.equal((await b.summary(false)).estimatedKrw, 0);
   assert.equal((await b.summary()).requests, 0);
   const { budgetStatus } = await import(
@@ -782,6 +877,120 @@ test('budget cache, trial quota, mock isolation and admin protection', async () 
   );
   assert.equal(response.status, 200);
   assert.ok(!(await response.text()).includes('session'));
+  sql.close();
+});
+test('analysis cache version invalidates only stale analyze results', async () => {
+  const { sql, db } = makeRepository();
+  const now = Date.now();
+  const b = new AIBudget(db, {}, () => now);
+  const analyzeInput = { receipt: 'same-input' };
+  const interpretInput = { text: 'same-input' };
+  const oldAnalyzeKey = await fingerprint({
+    session: 'cache-version',
+    feature: 'analyze',
+    input: analyzeInput,
+    p: null,
+    version: 2,
+  });
+  const existingInterpretKey = await fingerprint({
+    session: 'cache-version',
+    feature: 'interpret',
+    input: interpretInput,
+    p: null,
+    version: 2,
+  });
+  const insertCache = sql.prepare(
+    'INSERT INTO ai_cache (cache_key,payload,expires_at) VALUES (?,?,?)',
+  );
+  insertCache.run(
+    oldAnalyzeKey,
+    JSON.stringify({ source: 'old-analyze' }),
+    now + 60_000,
+  );
+  insertCache.run(
+    existingInterpretKey,
+    JSON.stringify({ source: 'cached-interpret' }),
+    now + 60_000,
+  );
+
+  let analyzeCalls = 0;
+  const analyzed = await b.run(
+    'cache-version',
+    'analyze',
+    false,
+    true,
+    analyzeInput,
+    async () => {
+      analyzeCalls++;
+      return { source: 'new-analyze' };
+    },
+  );
+  let interpretCalls = 0;
+  const interpreted = await b.run(
+    'cache-version',
+    'interpret',
+    false,
+    false,
+    interpretInput,
+    async () => {
+      interpretCalls++;
+      return { source: 'new-interpret' };
+    },
+  );
+
+  assert.equal(ANALYSIS_CACHE_VERSION, 3);
+  assert.deepEqual(analyzed, { source: 'new-analyze' });
+  assert.equal(analyzeCalls, 1);
+  assert.deepEqual(interpreted, { source: 'cached-interpret' });
+  assert.equal(interpretCalls, 0);
+  sql.close();
+});
+test('budget diagnostics identify the current session limit without leaking identifiers', async () => {
+  const { sql, db } = makeRepository();
+  const now = Date.now();
+  const day = new Date(now + 9 * 3600000).toISOString().slice(0, 10);
+  const entries = Array.from({ length: 20 }, (_, index) => ({
+    id: `entry-${index}`,
+    key: `private-cache-key-${index}`,
+    session: 'private-session-hash',
+    feature: 'analyze',
+    model: 'synthetic',
+    image: true,
+    at: now - index * 4000,
+    day,
+    reserved: 1000,
+    cost: 1000,
+    cumulative: (index + 1) * 1000,
+    status: 'completed',
+    usage: { model: 'synthetic', inputTokens: 10, outputTokens: 5 },
+    pricing: null,
+  }));
+  sql
+    .prepare('INSERT INTO ai_budget VALUES (?,?,0)')
+    .run(
+      'championship-2026',
+      JSON.stringify({ total: 20_000, halted: false, entries }),
+    );
+  const status = await new AIBudget(db, {}, () => now).diagnosticStatus(
+    'private-session-hash',
+  );
+  assert.equal(status.blockedReason, 'analyze_session_limit');
+  assert.equal(status.analyzeSessionUsed, 20);
+  assert.equal(status.analyzeSessionLimit, 20);
+  assert.equal(status.inputTokens, 200);
+  assert.equal(status.outputTokens, 100);
+  const serialized = JSON.stringify(status);
+  assert.ok(!serialized.includes('private-session-hash'));
+  assert.ok(!serialized.includes('private-cache-key'));
+  assert.ok(!serialized.includes('requestId'));
+
+  const routeSource = readFileSync(
+    'app/api/internal/ai-budget-status/route.ts',
+    'utf8',
+  );
+  assert.match(routeSource, /'Cache-Control': 'no-store'/);
+  assert.match(routeSource, /'X-Content-Type-Options': 'nosniff'/);
+  assert.doesNotMatch(routeSource, /AI_API_KEY|Authorization|receipt|base64/);
   sql.close();
 });
 test('atomic reservations cap concurrent spending and preserve uncertain charges', async () => {
@@ -941,6 +1150,12 @@ test('expired reservations remain charged after restart and inventory remains wr
 
 const { validateAnalysis } = await import(
   pathToFileURL(path.join(out, 'analysis.mjs'))
+);
+const { normalizeAnalysisResult, isNonFoodProductName } = await import(
+  pathToFileURL(path.join(out, 'analysis-normalization.mjs'))
+);
+const { managementNeed } = await import(
+  pathToFileURL(path.join(out, 'product.mjs'))
 );
 const resolution = await import(
   pathToFileURL(path.join(out, 'receipt-resolution.mjs'))
@@ -1142,6 +1357,487 @@ test('OpenAI strict schema makes every object property required without changing
     openAIAnalysisSchema.properties.rows.items.properties.expiryDate.anyOf,
   );
 });
+test('analysis validation reports privacy-safe reason codes for each domain rule', async () => {
+  const base = await openFixture();
+  base.rows[0].expiryDate = d.addDays(base.rows[0].purchasedAt, 1);
+  const cases = [
+    ['invalid_analysis_envelope', (x) => delete x.version],
+    ['invalid_warning_or_notice', (x) => x.warnings.push('')],
+    ['invalid_product_notice', (x) => (x.unresolved[0].extra = true)],
+    ['invalid_draft_basic_fields', (x) => (x.rows[0].unit = '')],
+    ['invalid_quantity', (x) => (x.rows[0].quantity = 0.0001)],
+    ['invalid_purchase_date', (x) => (x.rows[0].purchasedAt = '2026-02-30')],
+    ['invalid_expiry_date', (x) => (x.rows[0].expiryDate = '2020-01-01')],
+    ['invalid_storage', (x) => (x.rows[0].storage = '상온')],
+    [
+      'invalid_product_meaning',
+      (x) => (x.rows[0].meaning.storageCandidates = []),
+    ],
+    [
+      'invalid_weight_fields',
+      (x) => {
+        x.rows[0].meaning.weightPerUnit = null;
+        x.rows[0].meaning.weightUnit = 'g';
+      },
+    ],
+    [
+      'invalid_total_weight',
+      (x) => {
+        x.rows[0].meaning.weightPerUnit = 10;
+        x.rows[0].meaning.weightUnit = 'g';
+        x.rows[0].meaning.totalWeight = 999;
+      },
+    ],
+    ['invalid_resolution', (x) => (x.rows[0].meaning.resolution.evidence = [])],
+    ['invalid_analysis_fields', (x) => (x.unexpected = true)],
+    [
+      'empty_analysis',
+      (x) => {
+        x.rows = [];
+        x.unresolved = [];
+        x.excluded = [];
+      },
+    ],
+  ];
+  for (const [reasonCode, mutate] of cases) {
+    const value = structuredClone(base);
+    mutate(value);
+    assert.throws(
+      () => validateAnalysis(value),
+      (error) =>
+        error.reasonCode === reasonCode && error.message === reasonCode,
+      reasonCode,
+    );
+  }
+});
+test('receipt, display and normalized food names may differ by design', async () => {
+  const value = await openFixture();
+  const row = value.rows[0];
+  row.productName = '서울우1L';
+  row.name = '서울우유';
+  row.meaning.normalizedFoodName = '우유';
+  delete row.expiryDate;
+  const validated = validateAnalysis(value);
+  assert.equal(validated.rows[0].productName, '서울우1L');
+  assert.equal(validated.rows[0].name, '서울우유');
+  assert.equal(validated.rows[0].meaning.normalizedFoodName, '우유');
+  for (const invalidName of ['', '가'.repeat(61)]) {
+    const invalid = structuredClone(value);
+    invalid.rows[0].meaning.normalizedFoodName = invalidName;
+    assert.throws(
+      () => validateAnalysis(invalid),
+      (error) => error.reasonCode === 'invalid_product_meaning',
+    );
+  }
+});
+test('OpenAI recoverable row defects become unresolved instead of invalid responses', async () => {
+  const fixture = await openFixture();
+  fixture.rows[0].productName = 'ABC100';
+  fixture.rows[0].name = 'ABC100';
+  fixture.rows[0].meaning.normalizedFoodName = 'ABC100';
+  fixture.rows[0].quantity = 0.0001;
+  let diagnostic;
+  const p = createOpenAIProvider(openEnv(), async () => openResponse(fixture));
+  const result = await p.analyze(
+    { source: '직접 입력', text: '테스트 입력' },
+    { ...openOptions(), reportDiagnostic: (value) => (diagnostic = value) },
+  );
+  assert.equal(diagnostic.stage, 'domain');
+  assert.equal(diagnostic.reasonCode, undefined);
+  assert.equal(result.rows.length, 0);
+  assert.ok(result.unresolved.length > 0);
+  assert.ok(!JSON.stringify(diagnostic).includes('테스트 입력'));
+});
+test('analysis normalization aligns containers and isolates quantity and weight defects', async () => {
+  const fixture = await openFixture();
+  delete fixture.rows[0].expiryDate;
+  fixture.rows[0].meaning.resolution.classification = 'UNCERTAIN';
+  fixture.unresolved[0].resolution.classification = 'FOOD';
+  fixture.excluded[0].resolution.classification = 'FOOD';
+  fixture.rows[0].meaning.weightPerUnit = 500;
+  fixture.rows[0].meaning.weightUnit = 'g';
+  fixture.rows[0].meaning.totalWeight = 999;
+  const priceRow = structuredClone(fixture.rows[0]);
+  priceRow.productName = '행사상품 3,500원';
+  priceRow.quantity = 3500;
+  priceRow.unit = '원';
+  fixture.rows.push(priceRow);
+
+  const normalized = normalizeAnalysisResult(fixture, '2026-09-15');
+  const validated = validateAnalysis(normalized);
+  assert.equal(validated.rows[0].meaning.resolution.classification, 'FOOD');
+  assert.equal(validated.unresolved[0].resolution.classification, 'UNCERTAIN');
+  assert.equal(validated.excluded[0].resolution.classification, 'NON_FOOD');
+  assert.equal(validated.rows[0].meaning.weightPerUnit, null);
+  assert.equal(validated.rows[0].meaning.weightUnit, null);
+  assert.equal(validated.rows[0].meaning.totalWeight, null);
+  assert.ok(
+    validated.unresolved.some((item) => item.productName.includes('3,500원')),
+  );
+  assert.ok(validated.rows.every((row) => row.meaning.confirmed === false));
+});
+test('clear Korean grocery labels are automatic FOOD while non-food stays hidden from review', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const labels = [
+    ['무항생제 계란 10구', '무항생제 계란', '계란', 10, '개'],
+    ['서울우유 1L', '서울우유', '우유', 1, '팩'],
+    ['청정원 진간장 500ml', '청정원 진간장', '간장', 1, '병'],
+    ['신라면 5입', '신라면', '라면', 5, '봉'],
+  ];
+  fixture.rows = labels.map(([productName]) => ({
+    ...structuredClone(template),
+    productName,
+    meaning: {
+      ...structuredClone(template.meaning),
+      confidence: 'low',
+      resolution: {
+        ...structuredClone(template.meaning.resolution),
+        classification: 'UNCERTAIN',
+        score: 0.4,
+        candidates: ['후보'],
+      },
+    },
+  }));
+  fixture.unresolved = [
+    {
+      productName: '서울1000',
+      reason: '상품 코드가 모호합니다.',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['식품 종류를 확정할 문구가 없습니다.'],
+        candidates: ['우유', '두유'],
+      },
+    },
+    {
+      productName: '크리넥스 키친타월 4롤',
+      reason: '분류 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['생활용품 문구'],
+        candidates: [],
+      },
+    },
+    {
+      productName: '페브리즈 섬유탈취제 370ml',
+      reason: '분류 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['생활용품 문구'],
+        candidates: [],
+      },
+    },
+  ];
+  fixture.excluded = [];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  for (const [productName, name, normalizedName, quantity, unit] of labels) {
+    const row = result.rows.find((item) => item.productName === productName);
+    assert.ok(row);
+    assert.equal(row.name, name);
+    assert.equal(row.meaning.normalizedFoodName, normalizedName);
+    assert.equal(row.quantity, quantity);
+    assert.equal(row.unit, unit);
+    assert.equal(row.meaning.resolution.classification, 'FOOD');
+    assert.deepEqual(row.meaning.resolution.candidates, []);
+  }
+  const milk = result.rows.find((item) => item.productName === '서울우유 1L');
+  assert.deepEqual(
+    [
+      milk.meaning.weightPerUnit,
+      milk.meaning.weightUnit,
+      milk.meaning.totalWeight,
+    ],
+    [1, 'L', 1],
+  );
+  const soySauce = result.rows.find(
+    (item) => item.productName === '청정원 진간장 500ml',
+  );
+  assert.deepEqual(
+    [
+      soySauce.meaning.weightPerUnit,
+      soySauce.meaning.weightUnit,
+      soySauce.meaning.totalWeight,
+    ],
+    [500, 'ml', 500],
+  );
+  assert.deepEqual(
+    result.unresolved.map((item) => item.productName),
+    ['서울1000'],
+  );
+  assert.deepEqual(result.unresolved[0].resolution.candidates, [
+    '우유',
+    '두유',
+  ]);
+  assert.deepEqual(
+    result.excluded.map((item) => item.productName).sort(),
+    ['크리넥스 키친타월 4롤', '페브리즈 섬유탈취제 370ml'].sort(),
+  );
+});
+test('egg tray and Korean multipack counts never become weight quantities', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  fixture.rows = [
+    ['계란 10구', 10, '개'],
+    ['계란 15구', 15, '개'],
+    ['계란 30구', 30, '개'],
+    ['요구르트 4입', 4, '개'],
+    ['햇반 6개입', 6, '개'],
+  ].map(([productName]) => ({ ...structuredClone(template), productName }));
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map(({ quantity, unit }) => [quantity, unit]),
+    [
+      [10, '개'],
+      [15, '개'],
+      [30, '개'],
+      [4, '개'],
+      [6, '개'],
+    ],
+  );
+});
+test('display names stay product-specific while management guidance stays optional', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    '서울우유 1L',
+    '청정원 진간장 500ml',
+    '신라면 5입',
+    '비비고 왕교자',
+  ].map((productName) => ({ ...structuredClone(template), productName }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map(({ name, meaning }) => [name, meaning.normalizedFoodName]),
+    [
+      ['서울우유', '우유'],
+      ['청정원 진간장', '간장'],
+      ['신라면', '라면'],
+      ['비비고 왕교자', '만두'],
+    ],
+  );
+  assert.equal(managementNeed(result.rows[2]), 'low');
+  assert.equal(managementNeed(result.rows[0]), 'high');
+
+  const pageSource = readFileSync('app/page.tsx', 'utf8');
+  const reviewSource = readFileSync('app/product-review.tsx', 'utf8');
+  assert.doesNotMatch(pageSource, /normalizedFoodName:\s*row\.name/);
+  assert.match(pageSource, /장기 보관 관리가 필요 없는 품목/);
+  assert.match(reviewSource, /managementNeed\(draft\) === 'low'/);
+  assert.match(reviewSource, /장기 재고 관리가 필요하지 않다면 제외/);
+});
+test('eight clear foods remain eight FOOD rows without count overflow', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    '햇반 6개입',
+    '국산콩 두부 1모',
+    '배추김치 1팩',
+    '대파 1단',
+    '무항생제 계란 10구',
+    '서울우유 1L',
+    '청정원 진간장 500ml',
+    '신라면 5입',
+  ].map((productName) => ({ ...structuredClone(template), productName }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 8);
+  assert.equal(result.unresolved.length, 0);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+});
+test('ten clear foods all remain FOOD and the domain safety cap remains 50', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const productNames = [
+    '서울우유',
+    '무항생제 계란',
+    '청정원 진간장',
+    '신라면',
+    '배추김치',
+    '국산콩 두부',
+    '생수',
+    '요구르트',
+    '햇반',
+    '참기름',
+  ];
+  fixture.rows = productNames.map((productName) => ({
+    ...structuredClone(template),
+    productName,
+  }));
+  fixture.unresolved = [];
+  fixture.excluded = [];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 10);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+
+  const fifty = structuredClone(result);
+  fifty.rows = Array.from({ length: 50 }, (_, index) => ({
+    ...structuredClone(result.rows[0]),
+    productName: `서울우유 ${index + 1}`,
+  }));
+  assert.equal(validateAnalysis(fifty).rows.length, 50);
+  const fiftyOne = structuredClone(fifty);
+  fiftyOne.rows.push(structuredClone(fifty.rows[0]));
+  assert.throws(
+    () => validateAnalysis(fiftyOne),
+    (error) => error.reasonCode === 'invalid_analysis_envelope',
+  );
+});
+test('twenty clear foods stay in rows while only a genuinely ambiguous code is unresolved', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  const clearNames = Array.from({ length: 20 }, (_, index) =>
+    index % 2 === 0 ? `서울우유 ${index + 1} 1L` : `신라면 ${index + 1} 5입`,
+  );
+  fixture.rows = clearNames.map((productName) => ({
+    ...structuredClone(template),
+    productName,
+  }));
+  fixture.unresolved = [
+    {
+      productName: 'ABC100',
+      reason: '상품 코드만 있어 식품 종류를 확정할 수 없습니다.',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.3,
+        method: 'direct_ai',
+        evidence: ['식품 종류를 확인할 단어가 없습니다.'],
+        candidates: ['우유', '두유'],
+      },
+    },
+  ];
+  fixture.excluded = [];
+  fixture.warnings = [];
+
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.equal(result.rows.length, 20);
+  assert.deepEqual(
+    result.unresolved.map((item) => item.productName),
+    ['ABC100'],
+  );
+  assert.deepEqual(result.warnings, []);
+  assert.ok(
+    result.rows.every(
+      (row) => row.meaning.resolution.classification === 'FOOD',
+    ),
+  );
+});
+test('mixed non-food products stay excluded and never enter user review cards', async () => {
+  const fixture = await openFixture();
+  const template = fixture.rows[0];
+  fixture.rows = [
+    { ...structuredClone(template), productName: '서울우유 1L' },
+    { ...structuredClone(template), productName: '크리넥스 키친타월 4롤' },
+  ];
+  fixture.unresolved = [
+    {
+      productName: '페브리즈 섬유탈취제 370ml',
+      reason: '식품명 직접 확인',
+      resolution: {
+        classification: 'UNCERTAIN',
+        score: 0.2,
+        method: 'direct_ai',
+        evidence: ['상품명'],
+        candidates: [],
+      },
+    },
+  ];
+  fixture.excluded = [];
+  fixture.warnings = ['크리넥스 키친타월 4롤은 식품명 직접 확인이 필요합니다.'];
+  const result = validateAnalysis(
+    normalizeAnalysisResult(fixture, '2026-09-15'),
+  );
+  assert.deepEqual(
+    result.rows.map((row) => row.productName),
+    ['서울우유 1L'],
+  );
+  assert.deepEqual(result.unresolved, []);
+  assert.deepEqual(
+    result.excluded.map((item) => item.productName).sort(),
+    ['크리넥스 키친타월 4롤', '페브리즈 섬유탈취제 370ml'].sort(),
+  );
+  assert.deepEqual(result.warnings, []);
+  assert.equal(isNonFoodProductName('크리넥스 키친 타월 4롤'), true);
+  assert.equal(isNonFoodProductName('페브리즈 섬유 탈취제 370ml'), true);
+
+  const reviewSource = readFileSync('app/receipt-review.tsx', 'utf8');
+  const pageSource = readFileSync('app/page.tsx', 'utf8');
+  assert.match(reviewSource, /excludedCount/);
+  assert.doesNotMatch(reviewSource, /excluded\.map|onRestore|ExcludedProduct/);
+  assert.doesNotMatch(reviewSource, /키친타월|섬유탈취제/);
+  assert.match(pageSource, /isNonFoodProductName/);
+});
+test('OpenAI normalizes receipt dates, falls back to supplied today and drops invalid expiry', async () => {
+  const cases = [
+    ['2026.09.15', '2026-09-15'],
+    ['2026/09/15', '2026-09-15'],
+    ['2026-09-15', '2026-09-15'],
+  ];
+  for (const [inputDate, expected] of cases) {
+    const fixture = await openFixture();
+    fixture.rows[0].purchasedAt = inputDate;
+    const provider = createOpenAIProvider(openEnv(), async () =>
+      openResponse(fixture),
+    );
+    const result = await provider.analyze(
+      { source: '직접 입력', text: '날짜 형식 테스트' },
+      openOptions(),
+    );
+    assert.equal(result.rows[0].purchasedAt, expected);
+  }
+
+  const invalid = await openFixture();
+  invalid.rows[0].purchasedAt = '2026-02-30';
+  invalid.rows[0].expiryDate = '2026-02-31';
+  let suppliedToday;
+  const provider = createOpenAIProvider(openEnv(), async (_url, init) => {
+    const request = JSON.parse(init.body);
+    suppliedToday = JSON.parse(request.input[0].content[0].text).today;
+    return openResponse(invalid);
+  });
+  const result = await provider.analyze(
+    { source: '직접 입력', text: '잘못된 날짜 테스트' },
+    openOptions(),
+  );
+  assert.equal(result.rows[0].purchasedAt, suppliedToday);
+  assert.equal(result.rows[0].expiryDate, undefined);
+  assert.ok(
+    result.warnings.includes(
+      '구매일을 영수증에서 확정하지 못해 오늘 날짜를 사용했습니다. 등록 전 확인해주세요.',
+    ),
+  );
+});
 test('OpenAI image analysis preserves three classifications, usage and confirmation with one Responses request', async () => {
   const fixture = await openFixture();
   let calls = 0,
@@ -1189,15 +1885,25 @@ test('OpenAI image analysis preserves three classifications, usage and confirmat
 });
 test('OpenAI low confidence remains unresolved rather than an invented confirmed product', async () => {
   const f = await openFixture();
+  f.rows[0].productName = 'ABC100';
+  f.rows[0].name = 'ABC100';
+  f.rows[0].meaning.normalizedFoodName = 'ABC100';
   f.rows[0].meaning.confidence = 'low';
   f.rows[0].meaning.resolution.score = 0.5;
   const p = createOpenAIProvider(openEnv(), async () => openResponse(f));
   const r = await p.analyze(
-    { source: '직접 입력', text: '계란 2개' },
+    { source: '직접 입력', text: 'ABC100' },
     openOptions(),
   );
   assert.equal(r.rows.length, 0);
   assert.equal(r.unresolved.length, 2);
+  assert.deepEqual(validateAnalysis(r), r);
+  assert.deepEqual(Object.keys(r.unresolved.at(-1)).sort(), [
+    'productName',
+    'reason',
+    'resolution',
+  ]);
+  assert.equal(r.unresolved.at(-1).resolution.classification, 'UNCERTAIN');
 });
 test('OpenAI rejects malformed JSON, schema, refusal, incomplete and unexpected model', async () => {
   for (const [body, patch] of [

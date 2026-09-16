@@ -20,30 +20,53 @@ export const isQuantity = (v: unknown): v is number =>
   v <= 10000 &&
   Math.abs(v * 1000 - Math.round(v * 1000)) < 1e-7;
 const storage = (v: unknown) => ['냉장', '냉동', '실온'].includes(String(v));
+export type DraftValidationReason =
+  | 'invalid_draft_basic_fields'
+  | 'invalid_quantity'
+  | 'invalid_purchase_date'
+  | 'invalid_expiry_date'
+  | 'invalid_storage'
+  | 'invalid_product_meaning'
+  | 'invalid_weight_fields'
+  | 'invalid_resolution';
+
+export class DraftValidationError extends Error {
+  constructor(public readonly reasonCode: DraftValidationReason) {
+    super(reasonCode);
+    this.name = 'DraftValidationError';
+  }
+}
+
+const draftFail = (reasonCode: DraftValidationReason): never => {
+  throw new DraftValidationError(reasonCode);
+};
 export function assertDraft(value: unknown): asserts value is Draft {
+  if (!isRecord(value)) draftFail('invalid_draft_basic_fields');
+  const draft = value as Record<string, unknown>;
   if (
-    !isRecord(value) ||
-    !text(value.name, 60) ||
-    !text(value.productName, 120) ||
-    !text(value.category, 40) ||
-    !text(value.unit, 10) ||
-    !isQuantity(value.quantity) ||
-    value.quantity === 0 ||
-    !isDate(value.purchasedAt) ||
-    !storage(value.storage) ||
-    (value.expiryDate !== undefined &&
-      (!isDate(value.expiryDate) ||
-        value.expiryDate < String(value.purchasedAt)))
+    !text(draft.name, 60) ||
+    !text(draft.productName, 120) ||
+    !text(draft.category, 40) ||
+    !text(draft.unit, 10)
   )
-    throw new Error(
-      '식재료 정보가 올바르지 않아요. 이름, 수량, 단위와 날짜를 확인해주세요.',
-    );
-  if (value.meaning !== undefined) {
-    const m = value.meaning;
+    draftFail('invalid_draft_basic_fields');
+  if (!isQuantity(draft.quantity) || draft.quantity === 0)
+    draftFail('invalid_quantity');
+  if (!isDate(draft.purchasedAt)) draftFail('invalid_purchase_date');
+  if (!storage(draft.storage)) draftFail('invalid_storage');
+  if (
+    draft.expiryDate !== undefined &&
+    (!isDate(draft.expiryDate) || draft.expiryDate < String(draft.purchasedAt))
+  )
+    draftFail('invalid_expiry_date');
+  if (draft.meaning !== undefined) {
+    if (!isRecord(draft.meaning)) draftFail('invalid_product_meaning');
+    const m = draft.meaning as Record<string, unknown>;
+    // productName is the receipt label, name is the inventory/display label,
+    // and normalizedFoodName is the canonical food identity. They may differ.
     if (
-      !isRecord(m) ||
       m.version !== 1 ||
-      m.normalizedFoodName !== value.name ||
+      !text(m.normalizedFoodName, 60) ||
       !(m.brand === null || text(m.brand, 60)) ||
       !(m.packaging === null || text(m.packaging, 40)) ||
       !Array.isArray(m.storageCandidates) ||
@@ -57,17 +80,22 @@ export function assertDraft(value: unknown): asserts value is Draft {
       !Array.isArray(m.reasons) ||
       !m.reasons.length ||
       m.reasons.length > 5 ||
-      !m.reasons.every((r) => text(r, 300))
+      !m.reasons.every((r: unknown) => text(r, 300))
     )
-      throw new Error('상품 의미 해석 결과를 확인해주세요.');
+      draftFail('invalid_product_meaning');
     if (m.resolution !== undefined) {
-      assertResolution(m.resolution);
-      if (m.resolution.classification !== 'FOOD')
-        throw new Error('확인한 식품만 등록할 수 있어요.');
+      const resolution = m.resolution;
+      try {
+        assertResolution(resolution);
+      } catch {
+        draftFail('invalid_resolution');
+      }
+      if ((resolution as { classification: unknown }).classification !== 'FOOD')
+        draftFail('invalid_resolution');
     }
     if (m.weightPerUnit === null) {
       if (m.weightUnit !== null || m.totalWeight !== null)
-        throw new Error('중량 정보가 일치하지 않아요.');
+        draftFail('invalid_weight_fields');
     } else if (
       !isQuantity(m.weightPerUnit) ||
       m.weightPerUnit <= 0 ||
@@ -76,7 +104,7 @@ export function assertDraft(value: unknown): asserts value is Draft {
       !Number.isFinite(m.totalWeight) ||
       m.totalWeight <= 0
     )
-      throw new Error('중량/용량을 확인해주세요.');
+      draftFail('invalid_weight_fields');
   }
 }
 export function assertCommand(value: unknown): asserts value is Command {

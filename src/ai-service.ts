@@ -51,6 +51,31 @@ export type ProviderDiagnostic = {
   networkError: boolean;
   networkCategory?: string;
   dispatched: boolean;
+  reasonCode?:
+    | 'invalid_analysis_envelope'
+    | 'invalid_warning_or_notice'
+    | 'invalid_product_notice'
+    | 'invalid_draft_basic_fields'
+    | 'invalid_quantity'
+    | 'invalid_purchase_date'
+    | 'invalid_expiry_date'
+    | 'invalid_storage'
+    | 'invalid_product_meaning'
+    | 'normalized_food_name_mismatch'
+    | 'invalid_weight_fields'
+    | 'invalid_total_weight'
+    | 'invalid_resolution'
+    | 'invalid_analysis_fields'
+    | 'empty_analysis'
+    | 'domain_validation_failed'
+    | 'missing_resolution_method'
+    | 'invalid_resolution_method'
+    | 'invalid_classification'
+    | 'invalid_unresolved_shape'
+    | 'invalid_row_shape'
+    | 'invalid_meaning'
+    | 'invalid_confidence_or_score'
+    | 'post_validation_rule_failed';
 };
 /** Provider implementations return untrusted data; remote activation is server configured. */
 export interface AIProvider {

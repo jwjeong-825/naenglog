@@ -7,12 +7,14 @@ import {
   type RequestOptions,
   type ProviderDiagnostic,
 } from '../ai-service';
-import { validateAnalysis } from '../analysis';
+import { AnalysisValidationError, validateAnalysis } from '../analysis';
+import { normalizeAnalysisResult } from '../analysis-normalization';
 import { isRecord, assertCommand } from '../validation';
 import { validateImage } from '../image-input';
 import { apply, id, ranked, today, type State } from '../domain';
 
 type Schema = Record<string, unknown>;
+type DomainReason = NonNullable<ProviderDiagnostic['reasonCode']>;
 /** Strict transport schema only; the domain schema remains authoritative. */
 export function strictSchema(value: Schema): Schema {
   const result: Schema = {};
@@ -86,10 +88,12 @@ const unavailable = () =>
     'unavailable',
     'OpenAI 분석을 완료하지 못했어요. 다시 시도하거나 직접 입력해주세요.',
   );
-// Cost bounds have been reviewed for high-detail images on this model family only.
 const modelFamily = 'gpt-5.4-mini';
 const supportedModels = [modelFamily, `${modelFamily}-2026-03-17`];
-// Only protocol identifiers from a closed vocabulary enter diagnostics. Never messages.
+const isCompatibleResponseModel = (value: unknown, requested: string) =>
+  typeof value === 'string' &&
+  (value === requested ||
+    (requested === modelFamily && value.startsWith(`${modelFamily}-`)));
 const errorCodes = [
   'invalid_api_key',
   'invalid_request_error',
@@ -168,6 +172,7 @@ export function createOpenAIProvider(
     data: unknown,
     options: RequestOptions,
     image?: { mimeType: string; base64: string },
+    validateDomain?: (raw: unknown, diagnostic: ProviderDiagnostic) => unknown,
   ) {
     const diagnostic: ProviderDiagnostic = {
       stage: 'preflight',
@@ -209,8 +214,6 @@ export function createOpenAIProvider(
         });
       }
       const instructions = `${safety}\n${instruction}`;
-      // UTF-8 bytes upper-bound text tokens; include schema, framing and a conservative
-      // high-detail vision allowance (2,500 patches × 1.2 plus framing < 4,096).
       const inputBound =
         new TextEncoder().encode(JSON.stringify({ instructions, schema, data }))
           .length +
@@ -222,7 +225,6 @@ export function createOpenAIProvider(
           '한 번에 처리할 내용이 너무 많아요. 식품을 나누어 입력해주세요.',
         );
       let response: Response;
-      // Serialize before marking dispatch: local failures cannot have reached OpenAI.
       const requestBody = JSON.stringify({
         model,
         instructions,
@@ -313,11 +315,7 @@ export function createOpenAIProvider(
         throw bad();
       }
       diagnostic.stage = 'model';
-      if (
-        !isRecord(body) ||
-        !supportedModels.includes(String(body.model)) ||
-        (model !== modelFamily && body.model !== model)
-      )
+      if (!isRecord(body) || !isCompatibleResponseModel(body.model, model!))
         throw bad();
       diagnostic.stage = 'usage';
       if (
@@ -358,7 +356,7 @@ export function createOpenAIProvider(
       try {
         const decoded: unknown = JSON.parse(texts[0]);
         diagnostic.stage = 'domain';
-        return decoded;
+        return validateDomain ? validateDomain(decoded, diagnostic) : decoded;
       } catch {
         throw bad();
       }
@@ -401,60 +399,40 @@ export function createOpenAIProvider(
       }
     },
     async analyze(input, options) {
-      const raw = await request(
+      const suppliedToday = today();
+      return request(
         openAIAnalysisSchema,
-        `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim; normalize name and meaning.normalizedFoodName to the real food, not a code. Examples: 서울우1L may mean 우유; 하림블랙100X5 needs chicken context, otherwise unresolved. Keep salads, meal kits, lunch boxes as whole products, never split ingredients. Prices are never quantities. Unknown brand/weight/packaging/processed/openingSensitive must be null. Missing quantity or ambiguous identity goes unresolved with up to 3 candidates and evidence. Never invent expiryDate; use null unless explicitly printed. If purchase date absent, use supplied today and add a warning requiring confirmation. Weights must match quantity. resolution.method must be direct_ai, with evidence, score and matching classification. Low confidence or score below 0.7 must be unresolved. confirmed is false. No non-food is discarded. No OCR confidence claims without evidence. Return at most 5 food rows; additional visible products must remain unresolved and add a warning.`,
+        `Extract each purchase line once into rows (FOOD), excluded (NON_FOOD) or unresolved (UNCERTAIN). Preserve productName verbatim. name is a natural user-facing product name including a clear brand and product identity; never replace it with the generic normalized food type. meaning.normalizedFoodName is only the canonical food type. Brand plus an explicit food word is high-confidence FOOD: 서울우유 1L -> name 서울우유, normalizedFoodName 우유; 청정원 진간장 500ml -> name 청정원 진간장, normalizedFoodName 간장; 신라면 5입 -> name 신라면, normalizedFoodName 라면; 무항생제 계란 10구 -> name 무항생제 계란, normalizedFoodName 계란, quantity 10, unit 개. Parse egg 10구/15구/30구 as 10개/15개/30개 for inventory. Parse N입, N개입, N팩, N봉, N병 and N캔 as package quantity; 500ml, 1L and 200g are weight/volume, never quantity. Use unresolved only when the food identity cannot answer what food should enter inventory, such as 서울1000, 참P500, product codes or broken OCR. Explicit non-food such as 키친타월, 휴지, 섬유탈취제, 세제, 샴푸, 린스, 화장지 or 건전지 goes to excluded. Keep salads, meal kits and lunch boxes whole. Prices are never quantities. Unknown weight/packaging details must be null. Never invent expiryDate; use null unless explicitly printed. If purchase date is absent, use supplied today and warn. resolution.method is direct_ai with evidence, score and matching classification. Explicit food identity should receive high confidence and score at least 0.7; low confidence or score below 0.7 is only for genuinely ambiguous identity. confirmed is always false. Return every clearly identified food as a row, up to the schema safety limit of 50. Never move a product to unresolved merely because of its position or the number of food products.`,
         {
           source: input.source,
           text: input.text ?? input.recognition?.text ?? '',
-          today: today(),
+          today: suppliedToday,
         },
         options,
         input.image,
+        (raw, diagnostic) => {
+          const fail = (code: DomainReason): never => {
+            diagnostic.reasonCode = code;
+            throw bad();
+          };
+          const normalized = (() => {
+            try {
+              return normalizeAnalysisResult(raw, suppliedToday);
+            } catch {
+              return fail('domain_validation_failed');
+            }
+          })();
+          try {
+            return validateAnalysis(normalized);
+          } catch (error) {
+            fail(
+              error instanceof AnalysisValidationError
+                ? error.reasonCode
+                : 'post_validation_rule_failed',
+            );
+          }
+        },
       );
-      if (!isRecord(raw) || !Array.isArray(raw.rows)) throw bad();
-      // Nullable transport optionals are omitted before the unchanged domain validator.
-      if (raw.excluded === null) delete raw.excluded;
-      for (const row of raw.rows) {
-        if (!isRecord(row)) throw bad();
-        if (row.expiryDate === null) delete row.expiryDate;
-      }
-      let result;
-      try {
-        result = validateAnalysis(raw);
-      } catch {
-        throw bad();
-      }
-      for (const entry of [
-        ...result.rows.map((r) => r.meaning!),
-        ...result.unresolved,
-        ...(result.excluded ?? []),
-      ]) {
-        if (!entry.resolution || entry.resolution.method !== 'direct_ai')
-          throw bad();
-      }
-      for (const row of result.rows) {
-        const m = row.meaning!;
-        if (m.resolution!.classification !== 'FOOD') throw bad();
-        if (m.confidence === 'low' || m.resolution!.score < 0.7)
-          result.unresolved.push({
-            productName: row.productName,
-            reason: '상품명·수량을 직접 확인해주세요.',
-            resolution: { ...m.resolution!, classification: 'UNCERTAIN' },
-          });
-      }
-      result.rows = result.rows.filter(
-        (r) =>
-          r.meaning!.confidence !== 'low' &&
-          r.meaning!.resolution!.score >= 0.7,
-      );
-      if (
-        result.unresolved.some(
-          (r) => r.resolution?.classification !== 'UNCERTAIN',
-        )
-      )
-        throw bad();
-      return validateAnalysis(result);
     },
     async interpret(text, state, options) {
       const raw = await request(

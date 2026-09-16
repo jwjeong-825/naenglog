@@ -10,6 +10,11 @@ import type {
   ExcludedProduct,
 } from '../src/receipt-resolution';
 import { ProductReview } from './product-review';
+import { isNonFoodProductName } from '../src/analysis-normalization';
+import {
+  allReviewRowsConfirmed,
+  confirmAllReviewRows,
+} from '../src/review-confirmation';
 /* Preview uses a local blob URL; analysis sends validated bytes to our server. */
 /* eslint-disable next/no-img-element */
 import { useEffect, useRef, useState } from 'react';
@@ -51,6 +56,7 @@ import { ai } from '../src/ai-client';
 import { encodeImage } from '../src/image-input';
 import { AIServiceError } from '../src/ai-service';
 import {
+  ddayLabel,
   ranked,
   foods,
   id,
@@ -62,6 +68,7 @@ import {
   type Storage,
 } from '../src/domain';
 import { loadRemote, mutateRemote, ApiError, type Mutation } from '../src/api';
+const HOME_ITEM_PREVIEW_LIMIT = 5;
 const actionNames = {
   purchase: '구매 등록',
   consume: '소비',
@@ -298,34 +305,36 @@ function MemberHome({
   };
   const setRows = (next: Draft[]) =>
     setRowsRaw(
-      next.map((row) => {
-        if (!row.meaning) return row;
-        const old = rows.find((r) => r.productName === row.productName);
-        const changed =
-          old &&
-          (old.name !== row.name ||
-            old.quantity !== row.quantity ||
-            old.unit !== row.unit ||
-            old.storage !== row.storage ||
-            old.purchasedAt !== row.purchasedAt ||
-            old.expiryDate !== row.expiryDate);
-        return {
-          ...row,
-          meaning: {
-            ...row.meaning,
-            normalizedFoodName: row.name,
-            totalWeight:
-              row.meaning.weightPerUnit === null
-                ? null
-                : Math.round(row.meaning.weightPerUnit * row.quantity * 1000) /
-                  1000,
-            confirmed: changed ? false : row.meaning.confirmed,
-          },
-        };
-      }),
+      next
+        .filter((row) => !isNonFoodProductName(row.productName))
+        .map((row) => {
+          if (!row.meaning) return row;
+          const old = rows.find((r) => r.productName === row.productName);
+          const changed =
+            old &&
+            (old.name !== row.name ||
+              old.quantity !== row.quantity ||
+              old.unit !== row.unit ||
+              old.storage !== row.storage ||
+              old.purchasedAt !== row.purchasedAt ||
+              old.expiryDate !== row.expiryDate);
+          return {
+            ...row,
+            meaning: {
+              ...row.meaning,
+              totalWeight:
+                row.meaning.weightPerUnit === null
+                  ? null
+                  : Math.round(
+                      row.meaning.weightPerUnit * row.quantity * 1000,
+                    ) / 1000,
+              confirmed: changed ? false : row.meaning.confirmed,
+            },
+          };
+        }),
     );
   const list = state ? ranked(state) : [],
-    item = state?.items.find((i) => i.id === selected),
+    item = list.find((i) => i.id === selected),
     urgent = list.filter((i) => i.days >= 0 && i.days <= 2),
     expired = list.filter((i) => i.days < 0);
   const choose = (itemId: string) => {
@@ -355,7 +364,11 @@ function MemberHome({
       );
       if (controller.signal.aborted) return;
       setRows(result.rows);
-      setUnresolved(result.unresolved);
+      setUnresolved(
+        result.unresolved.filter(
+          (item) => !isNonFoodProductName(item.productName),
+        ),
+      );
       setExcluded(result.excluded ?? []);
       setNotice(
         [
@@ -416,12 +429,15 @@ function MemberHome({
       </span>
       <span
         className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
+        aria-label={
+          i.days < 0
+            ? `관리기한 ${Math.abs(i.days)}일 지남`
+            : i.days === 0
+              ? '관리기한 오늘'
+              : `관리기한 ${i.days}일 남음`
+        }
       >
-        {i.days < 0
-          ? `D+${Math.abs(i.days)}`
-          : i.days === 0
-            ? 'D-Day'
-            : `D-${i.days}`}
+        {ddayLabel(i.days)}
       </span>
       <ChevronRight size={17} />
     </button>
@@ -574,7 +590,7 @@ function MemberHome({
                   </div>
                   <div className="food-list">
                     {list.length ? (
-                      list.slice(0, 5).map((i) => card(i))
+                      list.slice(0, HOME_ITEM_PREVIEW_LIMIT).map((i) => card(i))
                     ) : (
                       <Blank text="영수증이나 직접 입력으로 첫 식품을 추가해 보세요." />
                     )}
@@ -719,13 +735,15 @@ function MemberHome({
                         key={i.id}
                         className={`badge ${i.days < 0 ? 'danger' : i.days <= 2 ? 'urgent' : ''}`}
                       >
-                        {i.days < 0
-                          ? `D+${Math.abs(i.days)}`
-                          : i.days === 0
-                            ? 'D-Day'
-                            : `D-${i.days}`}
+                        {ddayLabel(i.days)}
                       </span>
                     ))}
+                  {item.days < 0 && (
+                    <p className="overdue-guidance">
+                      관리기한이 지났어요. 실제 제품 표시와 현재 상태를 확인해
+                      주세요.
+                    </p>
+                  )}
                   <p>
                     {item.quantity}
                     {item.unit} 남음 · {item.storage}
@@ -983,6 +1001,10 @@ function MemberHome({
                       식품별 이름·수량·보관을 확인해주세요. 자세한 상품 정보는
                       펼쳐 수정할 수 있어요.
                     </p>
+                    <p className="review-guidance">
+                      곧 드실 식품이나 장기 보관 관리가 필요 없는 품목은
+                      제외해도 괜찮아요.
+                    </p>
                     {rows.map((d, n) => (
                       <div className="panel draft" key={n}>
                         <div className="draft-head">
@@ -1103,7 +1125,7 @@ function MemberHome({
                 )}
                 <ReceiptReview
                   pending={unresolved}
-                  excluded={excluded}
+                  excludedCount={excluded.length}
                   onResolve={(i, draft) => {
                     setRows([...rows, draft]);
                     setUnresolved(unresolved.filter((_, j) => i !== j));
@@ -1111,17 +1133,6 @@ function MemberHome({
                   onDismiss={(i) =>
                     setUnresolved(unresolved.filter((_, j) => i !== j))
                   }
-                  onRestore={(i) => {
-                    const item = excluded[i];
-                    setUnresolved([
-                      ...unresolved,
-                      {
-                        productName: item.productName,
-                        reason: '식품명과 수량을 직접 확인해주세요.',
-                      },
-                    ]);
-                    setExcluded(excluded.filter((_, j) => i !== j));
-                  }}
                 />
                 {rows.length > 0 && (
                   <section className="registration-footer">
@@ -1131,6 +1142,16 @@ function MemberHome({
                         있어요.
                       </p>
                     )}
+                    <button
+                      className="secondary wide"
+                      disabled={saving || allReviewRowsConfirmed(rows)}
+                      onClick={() => setRows(confirmAllReviewRows(rows))}
+                    >
+                      <Check size={18} />
+                      {allReviewRowsConfirmed(rows)
+                        ? '모두 확인 완료'
+                        : '전체 확인했습니다.'}
+                    </button>
                     <button
                       className="primary wide"
                       disabled={
