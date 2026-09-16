@@ -899,6 +899,54 @@ test('analysis cache version invalidates only stale analyze results', async () =
   assert.equal(interpretCalls, 0);
   sql.close();
 });
+test('budget diagnostics identify the current session limit without leaking identifiers', async () => {
+  const { sql, db } = makeRepository();
+  const now = Date.now();
+  const day = new Date(now + 9 * 3600000).toISOString().slice(0, 10);
+  const entries = Array.from({ length: 20 }, (_, index) => ({
+    id: `entry-${index}`,
+    key: `private-cache-key-${index}`,
+    session: 'private-session-hash',
+    feature: 'analyze',
+    model: 'synthetic',
+    image: true,
+    at: now - index * 4000,
+    day,
+    reserved: 1000,
+    cost: 1000,
+    cumulative: (index + 1) * 1000,
+    status: 'completed',
+    usage: { model: 'synthetic', inputTokens: 10, outputTokens: 5 },
+    pricing: null,
+  }));
+  sql
+    .prepare('INSERT INTO ai_budget VALUES (?,?,0)')
+    .run(
+      'championship-2026',
+      JSON.stringify({ total: 20_000, halted: false, entries }),
+    );
+  const status = await new AIBudget(db, {}, () => now).diagnosticStatus(
+    'private-session-hash',
+  );
+  assert.equal(status.blockedReason, 'analyze_session_limit');
+  assert.equal(status.analyzeSessionUsed, 20);
+  assert.equal(status.analyzeSessionLimit, 20);
+  assert.equal(status.inputTokens, 200);
+  assert.equal(status.outputTokens, 100);
+  const serialized = JSON.stringify(status);
+  assert.ok(!serialized.includes('private-session-hash'));
+  assert.ok(!serialized.includes('private-cache-key'));
+  assert.ok(!serialized.includes('requestId'));
+
+  const routeSource = readFileSync(
+    'app/api/internal/ai-budget-status/route.ts',
+    'utf8',
+  );
+  assert.match(routeSource, /'Cache-Control': 'no-store'/);
+  assert.match(routeSource, /'X-Content-Type-Options': 'nosniff'/);
+  assert.doesNotMatch(routeSource, /AI_API_KEY|Authorization|receipt|base64/);
+  sql.close();
+});
 test('atomic reservations cap concurrent spending and preserve uncertain charges', async () => {
   const { sql, db } = makeRepository();
   const now = Date.now();
