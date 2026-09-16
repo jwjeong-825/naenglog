@@ -1137,6 +1137,9 @@ function MemberHome({
                 />
                 {rows.length > 0 && (
                   <section className="registration-footer">
+                    <p className="review-guidance">
+                      상품의 개수가 정확하지 않거나 애매한 경우, 정확한 재고 관리를 위해 직접 수정하거나 등록해주세요.
+                    </p>
                     {unresolved.length > 0 && (
                       <p className="footnote">
                         확인이 필요한 품목을 수정하거나 제외하면 일괄 등록할 수
