@@ -150,3 +150,8 @@ Drizzle generate는 샌드박스에서 uv_os_get_passwd ENOMEM; 승인 실행에
 
 ## 진행 중 · 외부 HTTPS 진단
 network 예외분류/키 없는 고정 HEAD진단 경로 추가. ledger revision5/haltedtrue/잔여0 유지, 해제 금지. 모델호출 절대금지. 테스트/빌드 후배포하고 /api/internal/network-diagnostics GET만 실행하여 플랫폼 외부통신·Request헤더 구성 결과 확인 예정.
+
+## 최신 체크포인트 · 2026-09-16
+현재 요청은 회원가입/로그인/자동로그인, 회원별 재고 완전 분리, 선택 재료 레시피다. 구현 및 서버 회귀67개 통과. 로컬 Worker Mock 브라우저검증 진행 중. bcrypt3.0.3, migration0003 신규회원별 snapshot, legacy자동import차단, 클릭시만 recipes/provider/budget 경로. paid장부 halted=true/잔여0 유지, 절대 해제·유료호출 금지. network manual수정도 이번 소스에 포함. 다음: 브라우저검증 → 최종 type/lint/build → 민감정보검사 → GitHubmain/Sites소스 push → 현재 audience 유지 재배포 → 공개 비로그인401 확인. 환경키 변경 불필요.
+
+로컬 Worker/Mock 브라우저 검증 통과: 가입→빈 냉장고→재료3개→추천3개→상세/모바일390px넘침없음, 재접속로그인유지, 로그아웃세션무효화, 익명재고401. 페이지/선택/상세 자동모델호출0, 추천버튼에서만1회(Mock). 최종 검증 후Git/배포 예정.

@@ -1,3 +1,4 @@
+import { mockRecipes } from './recipes';
 import { resolveReceipt } from './receipt-resolution';
 import { id, ranked, type State } from './domain';
 import { createAIService, type AIProvider } from './ai-service';
@@ -83,6 +84,9 @@ export const mockProvider: AIProvider = {
       quantity = Number(count[1]);
     }
     return { ...base, action: dispose ? 'dispose' : 'consume', quantity };
+  },
+  async recipes(items) {
+    return mockRecipes(items);
   },
   async briefing(state) {
     return buildMockBriefing(state);

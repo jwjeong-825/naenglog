@@ -1,4 +1,8 @@
 'use client';
+import { MemberAccess } from './member-access';
+import type { Member } from '../src/server/auth';
+import { RecipeResults } from './recipe-results';
+import { selectedIngredients, type Recipe } from '../src/recipes';
 import { ReceiptInput } from './receipt-input';
 import { ReceiptReview } from './receipt-review';
 import type {
@@ -45,7 +49,7 @@ import {
 import { buildMockBriefing } from '../src/ai';
 import { ai } from '../src/ai-client';
 import { encodeImage } from '../src/image-input';
-import { AIServiceError, type Briefing } from '../src/ai-service';
+import { AIServiceError } from '../src/ai-service';
 import {
   ranked,
   foods,
@@ -103,12 +107,28 @@ function Blank({ text }: { text: string }) {
   );
 }
 export default function Home() {
+  return (
+    <MemberAccess>
+      {(user, logout) => (
+        <MemberHome key={user.id} user={user} logout={logout} />
+      )}
+    </MemberAccess>
+  );
+}
+function MemberHome({
+  user,
+  logout,
+}: {
+  user: Member;
+  logout: () => Promise<void>;
+}) {
+  const [recipeIds, setRecipeIds] = useState<string[]>([]),
+    [recipes, setRecipes] = useState<Recipe[]>([]),
+    [recipeMode, setRecipeMode] = useState('mock');
   const revisionRef = useRef(0),
     mutationRef = useRef(false);
   const [saving, setSaving] = useState(false);
   const requestRef = useRef<AbortController | null>(null);
-  const [brief, setBrief] = useState<Briefing | null>(null),
-    [briefSource, setBriefSource] = useState('모의 분석 중');
   const [state, setState] = useState<State | null>(null),
     [view, setView] = useState('home'),
     [selected, setSelected] = useState(''),
@@ -131,6 +151,8 @@ export default function Home() {
     [reset, setReset] = useState(false);
   const [unresolved, setUnresolved] = useState<PendingProduct[]>([]),
     [excluded, setExcluded] = useState<ExcludedProduct[]>([]);
+  const brief = state ? buildMockBriefing(state) : null;
+  const briefSource = '기본 규칙 안내';
   const selectImage = (file: File) => {
     requestRef.current?.abort();
     setBusy(false);
@@ -157,7 +179,7 @@ export default function Home() {
   useEffect(() => {
     let active = true;
     Promise.resolve()
-      .then(() => loadRemote(true))
+      .then(() => loadRemote())
       .then((s) => {
         if (active) {
           revisionRef.current = s.revision;
@@ -175,40 +197,6 @@ export default function Home() {
       active = false;
     };
   }, []);
-  useEffect(() => {
-    if (!state) return;
-    const controller = new AbortController();
-    ai.briefing(state, controller.signal)
-      .then((result) => {
-        if (!controller.signal.aborted) {
-          setBrief(result);
-          setBriefSource(
-            ai.mode === 'mock'
-              ? '규칙 기반'
-              : ai.mode === 'fallback'
-                ? '기본 규칙'
-                : 'AI 분석',
-          );
-          setProviderMode(ai.mode);
-        }
-      })
-      .catch((error: unknown) => {
-        if (!controller.signal.aborted) {
-          const limited =
-            error instanceof Error &&
-            'code' in error &&
-            error.code === 'trial_limit';
-          setBrief(buildMockBriefing(state));
-          setBriefSource(
-            limited
-              ? '체험 AI 한도 · 기본 규칙 안내'
-              : '분석 지연 · 기본 규칙 안내',
-          );
-          if (limited) setError(error.message);
-        }
-      });
-    return () => controller.abort();
-  }, [state]);
   useEffect(() => () => requestRef.current?.abort(), []);
   useEffect(
     () => () => {
@@ -235,6 +223,28 @@ export default function Home() {
     window.addEventListener('focus', sync);
     return () => window.removeEventListener('focus', sync);
   }, []);
+  const recommend = async () => {
+    if (!state || busy) return;
+    setBusy(true);
+    setError('');
+    const controller = new AbortController();
+    requestRef.current = controller;
+    try {
+      const items = selectedIngredients(state, recipeIds);
+      const result = await ai.recipes(items, controller.signal);
+      if (controller.signal.aborted) return;
+      setRecipes(result.recipes);
+      setRecipeMode(ai.mode);
+      setView('recipes');
+    } catch (e) {
+      if (!controller.signal.aborted)
+        setError(
+          e instanceof Error ? e.message : '레시피를 불러오지 못했어요.',
+        );
+    } finally {
+      if (requestRef.current === controller) setBusy(false);
+    }
+  };
   const go = (v: string) => {
     requestRef.current?.abort();
     setBusy(false);
@@ -422,6 +432,9 @@ export default function Home() {
         <button className="brand" onClick={() => go('home')}>
           냉로그
         </button>
+        <button className="text-button" onClick={() => go('profile')}>
+          내 정보
+        </button>
         <button
           className="header-add"
           onClick={() => go('add')}
@@ -470,6 +483,42 @@ export default function Home() {
           </section>
         ) : (
           <>
+            {view === 'profile' && (
+              <section className="panel">
+                <h1>내 정보</h1>
+                <dl className="member-info">
+                  <dt>이름</dt>
+                  <dd>{user.name}</dd>
+                  <dt>이메일</dt>
+                  <dd>{user.email}</dd>
+                  <dt>전화번호</dt>
+                  <dd>{user.phone}</dd>
+                </dl>
+                <p>이 계정의 냉장고만 연결되어 있어요.</p>
+                <button
+                  className="secondary"
+                  disabled={busy}
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await logout();
+                    } catch {
+                      setError('로그아웃하지 못했어요. 다시 시도해주세요.');
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  로그아웃
+                </button>
+              </section>
+            )}
+            {view === 'recipes' && (
+              <RecipeResults
+                recipes={recipes}
+                mode={recipeMode}
+                onBack={() => go('fridge')}
+              />
+            )}
             {view === 'home' && (
               <>
                 <div className="heading home-heading">
@@ -606,7 +655,26 @@ export default function Home() {
                         (filter === '곧 소비' && i.days <= 2) ||
                         i.storage === filter,
                     )
-                    .map((i) => card(i))}
+                    .map((i) => (
+                      <div className="select-food" key={i.id}>
+                        <label>
+                          <input
+                            type="checkbox"
+                            aria-label={`${i.name} 레시피 재료 선택`}
+                            checked={recipeIds.includes(i.id)}
+                            disabled={i.days < 0 || busy}
+                            onChange={(e) =>
+                              setRecipeIds((ids) =>
+                                e.target.checked
+                                  ? [...ids, i.id]
+                                  : ids.filter((id) => id !== i.id),
+                              )
+                            }
+                          />
+                        </label>
+                        {card(i)}
+                      </div>
+                    ))}
                   {!list.filter(
                     (i) =>
                       filter === '전체' ||
@@ -614,7 +682,24 @@ export default function Home() {
                       i.storage === filter,
                   ).length && <Blank text="이곳에 보관한 재료가 없어요." />}
                 </div>
-                <button className="primary wide" onClick={() => go('add')}>
+                <div className="recipe-action">
+                  <p>
+                    관리기한이 지난 재료는 선택할 수 없어요. 재료를 최대 10개
+                    고르세요.
+                  </p>
+                  <button
+                    className="primary wide"
+                    disabled={
+                      busy || recipeIds.length === 0 || recipeIds.length > 10
+                    }
+                    onClick={() => void recommend()}
+                  >
+                    {busy
+                      ? '레시피를 정리하고 있어요…'
+                      : `선택한 재료로 레시피 추천 (${recipeIds.length})`}
+                  </button>
+                </div>
+                <button className="secondary wide" onClick={() => go('add')}>
                   <Plus size={18} /> 구매내역 추가
                 </button>
               </>
@@ -1224,10 +1309,10 @@ export default function Home() {
                   className="secondary wide"
                   onClick={() => setReset(true)}
                 >
-                  데모 처음부터 다시 체험하기
+                  내 냉장고 비우기
                 </button>
                 <p className="footnote">
-                  현재 냉장고의 기록과 재고가 데모 초기 상태로 바뀝니다.
+                  현재 계정의 냉장고 기록과 재고를 모두 비웁니다.
                 </p>
               </>
             )}
@@ -1263,12 +1348,10 @@ export default function Home() {
             <AlertDialog open={reset} onOpenChange={setReset}>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>
-                    데모를 처음부터 시작할까요?
-                  </AlertDialogTitle>
+                  <AlertDialogTitle>내 냉장고를 비울까요?</AlertDialogTitle>
                   <AlertDialogDescription>
-                    직접 추가한 재고와 모든 기록이 삭제되고 기본 데모 데이터로
-                    교체됩니다.
+                    이 계정의 재고와 구매·소비 기록이 삭제됩니다. 다른 회원과
+                    이전 익명 기록은 변경되지 않습니다.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -1280,7 +1363,7 @@ export default function Home() {
                         if (
                           !(await commit(
                             { kind: 'reset' },
-                            '데모를 새로 준비했어요.',
+                            '빈 냉장고를 준비했어요.',
                           ))
                         )
                           return;

@@ -2,7 +2,7 @@ import type { Database } from './repository';
 import type { RequestOptions, ProviderDiagnostic } from '../ai-service';
 import { AIServiceError } from '../ai-service';
 
-export type Feature = 'analyze' | 'interpret' | 'briefing';
+export type Feature = 'analyze' | 'interpret' | 'briefing' | 'recipes';
 export type BudgetEnvironment = {
   AI_PRICING_JSON?: string;
   AI_MODEL?: string;
@@ -38,7 +38,9 @@ type Entry = {
   diagnostic?: ProviderDiagnostic & { failure: string };
 };
 type Ledger = {
-  total: number; halted: boolean; entries: Entry[];
+  total: number;
+  halted: boolean;
+  entries: Entry[];
   receiptTest?: { remaining: number; recovery: string };
 };
 export class BudgetError extends Error {
@@ -57,7 +59,11 @@ const exhausted =
 export const limits = (feature: Feature) => ({
   maxInputTokens: feature === 'analyze' ? 16000 : 6000,
   maxOutputTokens:
-    feature === 'analyze' ? 3000 : feature === 'interpret' ? 500 : 700,
+    feature === 'analyze' || feature === 'recipes'
+      ? 3000
+      : feature === 'interpret'
+        ? 500
+        : 700,
   maxImages: 1,
   maxImageBytes: 5 * 1024 * 1024,
   maxRetries: 0,
@@ -218,11 +224,16 @@ export class AIBudget {
     await this.mutate(ledgerId, (ledger) => {
       // Operator-approved one-shot recovery: background briefing and old tabs
       // cannot spend the receipt test allowance. Consumed in the same CAS as cost.
-      if (remote && ledger.receiptTest &&
-          (feature !== 'analyze' || !image || ledger.receiptTest.remaining !== 1))
-        throw new BudgetError(429,
+      if (
+        remote &&
+        ledger.receiptTest &&
+        (feature !== 'analyze' || !image || ledger.receiptTest.remaining !== 1)
+      )
+        throw new BudgetError(
+          429,
           '현재 영수증 이미지 1회 테스트만 허용됩니다. 기본 냉장고 기능은 계속 사용할 수 있습니다.',
-          'busy');
+          'busy',
+        );
       for (const entry of ledger.entries)
         if (entry.status === 'pending' && now - entry.at > 120000)
           entry.status = 'uncertain';
@@ -238,7 +249,13 @@ export class AIBudget {
           (e) =>
             e.feature === feature && (feature !== 'briefing' || e.day === day),
         ).length >=
-        (feature === 'analyze' ? 4 : feature === 'briefing' ? 5 : 15)
+        (feature === 'analyze'
+          ? 4
+          : feature === 'briefing'
+            ? 5
+            : feature === 'recipes'
+              ? 3
+              : 15)
       )
         throw new BudgetError(429, exhausted);
       if (
@@ -411,7 +428,7 @@ export class AIBudget {
               : 'normal',
       requests: l.entries.length,
       byFeature: Object.fromEntries(
-        ['analyze', 'interpret', 'briefing'].map((f) => [
+        ['analyze', 'interpret', 'briefing', 'recipes'].map((f) => [
           f,
           l.entries.filter((e) => e.feature === f).length,
         ]),

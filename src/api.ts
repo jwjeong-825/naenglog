@@ -1,6 +1,5 @@
 import type { Command, Draft, State } from './domain';
 import { assertState, isRecord } from './validation';
-import { STORAGE_KEY } from './storage';
 export type Snapshot = { state: State; revision: number; notice?: string };
 export type Mutation =
   | { kind: 'command'; command: Command }
@@ -31,6 +30,8 @@ async function request(body?: unknown): Promise<Snapshot> {
         : {}),
     });
     const raw: unknown = await result.json();
+    if (result.status === 401 && typeof window !== 'undefined')
+      window.dispatchEvent(new Event('naenglog-auth-required'));
     if (!result.ok)
       throw new ApiError(
         result.status,
@@ -56,42 +57,9 @@ async function request(body?: unknown): Promise<Snapshot> {
     clearTimeout(timer);
   }
 }
-export async function loadRemote(migrate = false): Promise<Snapshot> {
-  const snapshot = await request();
-  if (!migrate || snapshot.revision !== 0) return snapshot;
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw || localStorage.getItem('naenglog.migrated')) return snapshot;
-  } catch {
-    return snapshot;
-  }
-  let legacy: unknown;
-  try {
-    legacy = JSON.parse(raw);
-    assertState(legacy);
-  } catch {
-    return {
-      ...snapshot,
-      notice:
-        '이전 브라우저 기록을 읽지 못했어요. 원본을 보존하고 서버 냉장고를 열었어요.',
-    };
-  }
-  const imported = await request({
-    kind: 'import',
-    revision: 0,
-    state: legacy,
-  });
-  try {
-    localStorage.setItem('naenglog.migrated', new Date().toISOString());
-  } catch {
-    /* Import is durable even if the local marker cannot be written. */
-  }
-  return {
-    ...imported,
-    notice:
-      '이전 브라우저 냉장고를 서버에 옮겼어요. 기존 데이터도 백업으로 남겨두었어요.',
-  };
+// Legacy browser data is never silently attached to a newly authenticated account.
+export async function loadRemote(): Promise<Snapshot> {
+  return request();
 }
 export const mutateRemote = (mutation: Mutation, revision: number) =>
   request({ ...mutation, revision });

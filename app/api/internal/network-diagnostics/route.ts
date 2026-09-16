@@ -5,7 +5,7 @@ export async function GET() {
   let requestConstruction: {valid:boolean;category:string|null} = {valid:true,category:null};
   try {
     // Construct only, never execute this request. Values stay inside the Worker.
-    new Request('https://api.openai.com/v1/responses', {method:'POST',redirect:'error',
+    new Request('https://api.openai.com/v1/responses', {method:'POST',redirect:'manual',
       headers:{Authorization:`Bearer ${bindings.AI_API_KEY?.trim() ?? ''}`,
         'Content-Type':'application/json',...(bindings.AI_PROJECT_ID?{'OpenAI-Project':bindings.AI_PROJECT_ID}:{})},body:'{}'});
   } catch (error) {requestConstruction={valid:false,category:classifyNetworkError(error)};}

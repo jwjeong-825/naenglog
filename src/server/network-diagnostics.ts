@@ -22,13 +22,14 @@ export function networkProbe(fetcher: typeof fetch = fetch) {
   cached ??= Promise.all([
     ['general_https', 'https://example.com/', 'manual'],
     ['openai_https', 'https://api.openai.com/', 'manual'],
-    ['openai_adapter_redirect_mode', 'https://api.openai.com/', 'error'],
+    ['openai_unsupported_redirect_mode', 'https://api.openai.com/', 'error'],
+    ['openai_unauthenticated_models', 'https://api.openai.com/v1/models', 'manual'],
   ].map(async ([target, url, redirect]) => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 5000);
     const start = Date.now();
     try {
-      const response = await fetcher(url, {method:'HEAD', redirect:redirect as RequestRedirect, signal:controller.signal});
+      const response = await fetcher(url, {method:target === 'openai_unauthenticated_models' ? 'GET' : 'HEAD', redirect:redirect as RequestRedirect, signal:controller.signal});
       await response.body?.cancel();
       return {target,httpStatus:response.status,category:null,elapsedMs:Date.now()-start};
     } catch (error) {

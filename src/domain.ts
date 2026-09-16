@@ -37,7 +37,7 @@ export type Transaction = {
 };
 export type State = {
   version: 1;
-  user: { id: string; mode: 'demo' };
+  user: { id: string; mode: 'demo' | 'member' };
   items: Item[];
   purchases: { id: string; source: string; at: string }[];
   analyses: {
@@ -311,4 +311,16 @@ export function seed(): State {
     '시작용 데모',
   );
   return s;
+}
+
+export function emptyState(userId: string): State {
+  return {
+    version: 1,
+    user: { id: userId, mode: 'member' },
+    items: [],
+    purchases: [],
+    analyses: [],
+    transactions: [],
+    applied: [],
+  };
 }

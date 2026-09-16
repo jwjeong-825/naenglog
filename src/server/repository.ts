@@ -1,4 +1,4 @@
-import { apply, purchase, seed, type State } from '../domain';
+import { apply, purchase, seed, emptyState, type State } from '../domain';
 import {
   assertState,
   assertCommand,
@@ -26,25 +26,37 @@ export class InventoryRepository {
   constructor(
     private db: Database,
     private provider: 'mock' | 'remote' | 'fallback' = 'mock',
+    private memberOwned = false,
   ) {}
+  private get table() {
+    return this.memberOwned ? 'member_inventories' : 'inventories';
+  }
+  private get owner() {
+    return this.memberOwned ? 'user_id' : 'session_hash';
+  }
   async find(session: string): Promise<Snapshot | null> {
     const row = await this.db
       .prepare(
-        'SELECT snapshot, revision FROM inventories WHERE session_hash = ?',
+        `SELECT snapshot, revision FROM ${this.table} WHERE ${this.owner} = ?`,
       )
       .bind(session)
       .first<{ snapshot: string; revision: number }>();
     if (!row) return null;
     const state: unknown = JSON.parse(row.snapshot);
     assertState(state);
+    if (
+      this.memberOwned &&
+      (state.user.id !== session || state.user.mode !== 'member')
+    )
+      throw new Error('Owner mismatch');
     return { state, revision: row.revision };
   }
   async create(session: string): Promise<Snapshot> {
-    const state = seed(),
+    const state = this.memberOwned ? emptyState(session) : seed(),
       at = new Date().toISOString();
     await this.db
       .prepare(
-        'INSERT OR IGNORE INTO inventories (session_hash, snapshot, revision, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
+        `INSERT OR IGNORE INTO ${this.table} (${this.owner}, snapshot, revision, created_at, updated_at) VALUES (?, ?, 0, ?, ?)`,
       )
       .bind(session, JSON.stringify(state), at, at)
       .run();
@@ -106,8 +118,14 @@ export class InventoryRepository {
         String(request.source),
         this.provider,
       );
-    } else if (request.kind === 'reset') next = seed();
+    } else if (request.kind === 'reset')
+      next = this.memberOwned ? emptyState(session) : seed();
     else if (request.kind === 'import') {
+      if (this.memberOwned)
+        throw new InventoryError(
+          403,
+          '이전 익명 기록은 회원 냉장고에 자동 연결하지 않습니다.',
+        );
       if (current.revision !== 0)
         throw new InventoryError(
           409,
@@ -116,10 +134,23 @@ export class InventoryRepository {
       assertState(request.state);
       next = request.state;
     } else throw new InventoryError(400, '지원하지 않는 변경 요청이에요.');
+    if (this.memberOwned) {
+      next.user = { id: session, mode: 'member' };
+      next.items = next.items.map((row) => ({ ...row, userId: session }));
+      next.purchases = next.purchases.map((row) => ({
+        ...row,
+        userId: session,
+      }));
+      next.transactions = next.transactions.map((row) => ({
+        ...row,
+        userId: session,
+      }));
+      next.analyses = next.analyses.map((row) => ({ ...row, userId: session }));
+    }
     assertState(next);
     const result = await this.db
       .prepare(
-        'UPDATE inventories SET snapshot = ?, revision = revision + 1, updated_at = ? WHERE session_hash = ? AND revision = ?',
+        `UPDATE ${this.table} SET snapshot = ?, revision = revision + 1, updated_at = ? WHERE ${this.owner} = ? AND revision = ?`,
       )
       .bind(
         JSON.stringify(next),

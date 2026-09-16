@@ -1,3 +1,4 @@
+import { recipeSchema, validateRecipes } from '../recipes';
 import analysisSchema from '../../schemas/analysis-result.schema.json' with { type: 'json' };
 import { classifyNetworkError } from './network-diagnostics';
 import {
@@ -247,7 +248,7 @@ export function createOpenAIProvider(
         response = await fetcher('https://api.openai.com/v1/responses', {
           method: 'POST',
           signal: options.signal,
-          redirect: 'error',
+          redirect: 'manual',
           headers: {
             Authorization: `Bearer ${key}`,
             'Content-Type': 'application/json',
@@ -259,7 +260,9 @@ export function createOpenAIProvider(
         });
       } catch (error) {
         diagnostic.networkError = !options.signal.aborted;
-        diagnostic.networkCategory = options.signal.aborted ? undefined : classifyNetworkError(error);
+        diagnostic.networkCategory = options.signal.aborted
+          ? undefined
+          : classifyNetworkError(error);
         throw unavailable();
       }
       diagnostic.httpStatus = response.status;
@@ -376,6 +379,27 @@ export function createOpenAIProvider(
     }));
   return {
     mode: 'remote',
+    async recipes(items, options) {
+      const selected = items.map((i) => ({
+        id: i.id,
+        name: i.name,
+        quantity: i.quantity,
+        unit: i.unit,
+        storage: i.storage,
+        expectedAt: i.expectedAt,
+      }));
+      const raw = await request(
+        recipeSchema,
+        'Recommend 3 distinct practical Korean recipes using primarily ONLY selected inventory items. Use exact itemId, name and unit, positive quantities no greater than available stock PER recipe (recipes are alternatives). Separate up to 5 necessary extra basic ingredients. Consider storage, realistic cooking techniques, quantities and meal suitability. Do not invent available ingredients. Provide 3-8 concrete numbered cooking steps with quantities, heat and time. Do not claim food safety. Mention checking product labels and actual condition; cook meat and eggs following product instructions. Never modify inventory.',
+        { today: today(), items: selected },
+        options,
+      );
+      try {
+        return validateRecipes(raw, items);
+      } catch {
+        throw bad();
+      }
+    },
     async analyze(input, options) {
       const raw = await request(
         openAIAnalysisSchema,

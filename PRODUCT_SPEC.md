@@ -1,7 +1,7 @@
 # 제품 명세
 
 ## 사용자 흐름
-데모 재고로 시작 → 구매 추가(영수증/온라인 캡처/직접 입력) → 설정에 따른 Mock/OpenAI 분석 → 이름·수량·단위·구매일·보관 확인/수정 → 등록 → 홈 우선순위 → 자연어 명령 확인 → 재고와 거래 원장 동시 갱신.
+회원가입/로그인 → 빈 회원 냉장고 → 구매 추가(영수증/온라인 캡처/직접 입력) → 설정에 따른 Mock/OpenAI 분석 → 이름·수량·단위·구매일·보관 확인/수정 → 등록 → 홈 우선순위 → 자연어 명령 확인 → 재고와 거래 원장 동시 갱신.
 Mock에서는 이미지를 실제로 해석하지 않는다. OpenAI 활성화 시 서버에서 실제 이미지 의미 분석을 요청한다. 미리보기와 Mock 샘플 결과를 명확히 구분한다. 분석 요청 시 이미지 바이트를 서비스 서버로 전송하며 영구 저장하지 않는다. Mock에서는 외부 AI로 전송하지 않는다.
 
 ## 화면
@@ -13,7 +13,7 @@ Mock에서는 이미지를 실제로 해석하지 않는다. OpenAI 활성화 �
 - 기록: 소비/폐기/보관/조정 거래, 재고 초기화 확인.
 
 ## 데이터 및 조건
-User는 브라우저 데모 사용자. Purchase는 출처/일자/분석 ID와 연결된다. InventoryItem은 ID/이름/상품명/분류/수량/단위/구매일/등록일/보관/예상일을 가진다. InventoryTransaction은 구매·소비·폐기·조정·보관 변경을 보존한다. AIAnalysis는 provider=mock/remote/fallback, 입력 유형, 결과, 시각을 가진다.
+User는 회원 계정이며 기존 익명 데모 사용자는 별도 보존한다. Purchase는 출처/일자/분석 ID와 연결된다. InventoryItem은 ID/이름/상품명/분류/수량/단위/구매일/등록일/보관/예상일을 가진다. InventoryTransaction은 구매·소비·폐기·조정·보관 변경을 보존한다. AIAnalysis는 provider=mock/remote/fallback, 입력 유형, 결과, 시각을 가진다.
 영속성은 D1의 방문자별 snapshot과 revision. HttpOnly 익명 세션으로 다른 방문자와 분리한다. 서버가 수량과 원장을 함께 저장한다. 기존 localStorage는 한 번 가져오고 백업으로 보존한다. 계정 복구/기기 간 동기화는 미구현이다.
 0개 재고는 원장과 함께 보존하되 활성 목록에서 제외. 음수/비수/초과 소비 금지. 같은 명령 중복 실행 방지. 날짜는 서버와 브라우저 모두 Asia/Seoul 달력일 기준. 보관 변경은 구매일 기반으로 재계산하되 기존 만료 재료의 수명을 연장하지 않는다.
 예상 기간은 데모 정책으로 식품 안전 보장이 아니며 실제 제공 전 근거 검토가 필요하다. 지난 시점은 섭취 추천 대신 상태 확인 대상으로 분리한다.
@@ -23,7 +23,7 @@ User는 브라우저 데모 사용자. Purchase는 출처/일자/분석 ID와 �
 대표 검증: 구매 확인 → 계란 10개 등록 → '계란 3개 썼어' 확인 실행 → 7개 → 닭가슴살 냉동 변경 → 기간 갱신 → 새로고침 유지.
 
 ## 서버 동작 조건
-GET /api/inventory는 세션별 초기 데모 또는 현재 냉장고를 반환한다. POST는 revision과 command/purchase/reset/import를 받아 서버에서 재검증한다. 오래된 revision은 409, 세션 누락은 401, 다른 Origin은 403, 잘못된 JSON은 400, 1MiB 초과는 413. 동일 구매/소비 ID 재시도로 수량이 두 번 변경되지 않는다.
+GET /api/inventory는 회원 세션을 확인하고 본인 냉장고를 반환한다. 최초 생성은 빈 냉장고이고 비로그인은 401이다. POST는 revision과 command/purchase/reset/import를 받아 서버에서 재검증한다. 오래된 revision은 409, 세션 누락은 401, 다른 Origin은 403, 잘못된 JSON은 400, 1MiB 초과는 413. 동일 구매/소비 ID 재시도로 수량이 두 번 변경되지 않는다.
 
 ## 검증 현황
 2026-09-09 테스트 21개 통과. 실제 SQLite 격리/동시성/가져오기와 HTTP 보호 조건 포함. 로컬 브라우저에서 구매 등록, 자연어 소비, 새로고침 유지, 냉동 변경 및 한국 날짜 표시 확인. 전체 E2E 자동 회귀는 후속 과제다.
@@ -79,3 +79,12 @@ POST /api/ai(operation=config/analyze/interpret/briefing)는 동일 Origin과 �
 AI_PROVIDER=openai로 서버 어댑터를 선택하며 외부 UI 계약은 mode=remote이다. 모델/키/전용 Project/최신 가격·환율/하드 한도 확인이 준비되어야 유료 요청이 가능하다. API는 Responses 단일 호출/도구0/재시도0/저장false, 기본 모델 프로필은 gpt-5.4-mini. 원본 상품→정규화→3분류→사용자 확인 구조 유지. 낮은 confidence/score<0.7은 unresolved로 강제하고 새로운 confirmed는 false. 구매일 누락 시 오늘+확인 경고, 없는 소비기한 생성 금지.
 
 빠른 기록은 명령 후보만 해석하고 복수 로트·없는 대상·초과 수량을 거절한다. 브리핑은 기존 순위와 D-Day를 바꾸지 않고 설명·메뉴만 반환하며 지난 재료가 있으면 메뉴를 비운다. 실제 이미지와 문장은 활성화 시 OpenAI로 전달된다. EXIF/픽셀 사전 검사 및 실제 인식 품질 실측은 미완료다. 상세 설정은 AI_PROVIDER_SETUP.md 참조.
+
+## 2026-09-16 · 회원별 냉장고와 선택 재료 레시피 (이전 익명 세션 명세 대체)
+
+- 가입/로그인/자동 로그인/내 정보/로그아웃 제공. 이메일 또는 휴대전화로 로그인한다. bcrypt cost12, 토큰 SHA-256, HttpOnly/Secure/SameSite=Lax 쿠키. 일반 세션은 브라우저 세션 쿠키+서버12시간, 자동 로그인은30일 절대 만료.
+- 서버가 sessions → users.id로 소유자를 결정한다. member_inventories.user_id FK의 원자적 snapshot에 items/purchases/transactions/analyses와 각 userId를 보관한다. 클라이언트 userId를 믿지 않는다. 새 회원은 빈 재고이며 legacy inventories/localStorage를 자동 연결하지 않는다.
+- 냉장고에서1~10개 선택 → 명시적 추천 버튼 → 최소3개 대안 → 상세 조리 순서. 기한 지난/0개/타 회원 ID는 서버에서 거절한다. 선택 항목의 ID·이름·수량·단위·보관·기한만 Provider에 전달한다. 반환 수량은 각 대안별 현재 재고 이하이고 추가 재료를 분리한다. AI는 재고를 변경하지 않는다.
+- 페이지 진입/재고 변경 시 자동 유료 briefing 호출 제거. 기본 규칙 보관 안내는 즉시 제공한다. 레시피도 클릭 전 AI 호출0. Mock은 시연 예시라고 표시한다.
+- recipes는 기존 전역 예약/usage/동시성/캐시/retry0 경계 안에서 회원당 누적3회, 최대출력3000토큰. paid ledger halted/remaining0은 그대로 유지하여 운영 유료 추천은 현재 차단 상태다. 이번 구현은 해제 승인이 아니다.
+- migration0003은 users/sessions/member_inventories/auth_attempts만 추가한다. 기존 재고와 과금 장부는 삭제·수정하지 않는다. 상세 보안·운영 제한은 AUTH_AND_RECIPES.md.

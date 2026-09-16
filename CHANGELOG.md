@@ -81,3 +81,6 @@ Responses API analyze/interpret/briefing, strict schema 변환, 서버 키/Proje
 
 ## 2026-09-15 · 비과금 네트워크 진단
 DNS/TLS/연결/refused/reset/런타임/redirect/요청구성 오류 분류 추가. 고정 공개 endpoint HEAD만 사용하는 운영 진단 경로와 credential없는 요청 테스트 추가. paid 장부는 변경하지 않는다.
+
+## 2026-09-16 · 회원 계정 및 선택 재료 레시피
+회원 로그인·30일 자동로그인·로그아웃, bcrypt cost12, 서버 세션 기반 소유권, 빈 회원 냉장고와 legacy 격리, 선택 재료 레시피 목록/상세/검증/예산 경계. 자동 유료 briefing 제거. Sites redirect:error 비호환을 manual로 수정. migration0003은 회원 테이블만 추가, 운영 장부 해제나 유료 호출 없음.

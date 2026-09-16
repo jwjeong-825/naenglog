@@ -1,6 +1,7 @@
+import { validateRecipes } from './recipes';
 import { validateAnalysis, type AnalysisResult } from './analysis';
 import type { ImageInput } from './image-input';
-import type { Command, Draft, State } from './domain';
+import type { Command, Draft, State, Item } from './domain';
 import { assertCommand, isRecord } from './validation';
 export type ProviderMode = 'mock' | 'fallback' | 'remote';
 export type Briefing = { title: string; message: string; menu: string };
@@ -61,6 +62,7 @@ export interface AIProvider {
     options: RequestOptions,
   ): Promise<unknown>;
   briefing(state: State, options: RequestOptions): Promise<unknown>;
+  recipes(items: Item[], options: RequestOptions): Promise<unknown>;
 }
 export class AIServiceError extends Error {
   constructor(
@@ -147,6 +149,18 @@ export function createAIService(provider: AIProvider, timeoutMs = 5000) {
     );
   return {
     mode: provider.mode,
+    recipes: (items: Item[], signal?: AbortSignal) =>
+      request(
+        (o) => provider.recipes(structuredClone(items), o),
+        (raw) => {
+          try {
+            return validateRecipes(raw, items);
+          } catch {
+            throw invalid();
+          }
+        },
+        signal,
+      ),
     analyzeDetailed: (input: AnalyzeInput, signal?: AbortSignal) =>
       request<AnalysisResult>(
         (o) => provider.analyze(input, o),

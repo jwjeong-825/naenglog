@@ -55,3 +55,12 @@ UI의 AI 요청은 모두 /api/ai를 거친다. 동일 Mock/실제 Provider 계�
 ## OpenAI 어댑터 구현
 
 기존 AIProvider 경계에 Responses API용 openai-provider를 추가했다. analyze/interpret/briefing, 구조화 출력, 실제 usage 정산, 제한/timeout/재시도0 연결. 사용자 최종 확인과 DB 구조 유지. 키를 입력하거나 실제 API를 호출하지 않았으며 운영 활성화 및 실제 인식 검증은 사용자 설정 후 필요하다.
+
+## 2026-09-16 · 회원별 냉장고와 선택 재료 레시피 (이전 익명 세션 명세 대체)
+
+- 가입/로그인/자동 로그인/내 정보/로그아웃 제공. 이메일 또는 휴대전화로 로그인한다. bcrypt cost12, 토큰 SHA-256, HttpOnly/Secure/SameSite=Lax 쿠키. 일반 세션은 브라우저 세션 쿠키+서버12시간, 자동 로그인은30일 절대 만료.
+- 서버가 sessions → users.id로 소유자를 결정한다. member_inventories.user_id FK의 원자적 snapshot에 items/purchases/transactions/analyses와 각 userId를 보관한다. 클라이언트 userId를 믿지 않는다. 새 회원은 빈 재고이며 legacy inventories/localStorage를 자동 연결하지 않는다.
+- 냉장고에서1~10개 선택 → 명시적 추천 버튼 → 최소3개 대안 → 상세 조리 순서. 기한 지난/0개/타 회원 ID는 서버에서 거절한다. 선택 항목의 ID·이름·수량·단위·보관·기한만 Provider에 전달한다. 반환 수량은 각 대안별 현재 재고 이하이고 추가 재료를 분리한다. AI는 재고를 변경하지 않는다.
+- 페이지 진입/재고 변경 시 자동 유료 briefing 호출 제거. 기본 규칙 보관 안내는 즉시 제공한다. 레시피도 클릭 전 AI 호출0. Mock은 시연 예시라고 표시한다.
+- recipes는 기존 전역 예약/usage/동시성/캐시/retry0 경계 안에서 회원당 누적3회, 최대출력3000토큰. paid ledger halted/remaining0은 그대로 유지하여 운영 유료 추천은 현재 차단 상태다. 이번 구현은 해제 승인이 아니다.
+- migration0003은 users/sessions/member_inventories/auth_attempts만 추가한다. 기존 재고와 과금 장부는 삭제·수정하지 않는다. 상세 보안·운영 제한은 AUTH_AND_RECIPES.md.

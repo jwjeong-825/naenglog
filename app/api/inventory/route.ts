@@ -1,3 +1,4 @@
+import { AuthStore } from '../../../src/server/auth';
 import type { AIEnvironment } from '../../../src/server/ai-provider';
 import { env } from 'cloudflare:workers';
 import { InventoryRepository } from '../../../src/server/repository';
@@ -12,7 +13,9 @@ function handlers() {
       )
         ? 'remote'
         : 'mock',
+      true,
     ),
+    new AuthStore(db),
   );
 }
 export async function GET(request: Request) {

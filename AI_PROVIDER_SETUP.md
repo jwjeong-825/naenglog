@@ -106,3 +106,11 @@ receiptTest가 존재하는 동안 remote briefing/자연어/텍스트 분석은
 ## 2026-09-15 · 키 없는 네트워크 진단
 network-diagnostics는 예외 원문을 출력하지 않고 DNS/TLS/refused/reset/connect-timeout/redirect/header구성/runtime제한/generic 범주만 반환한다. OpenAI 어댑터의 diagnostic.networkCategory에도 연결한다.
 /api/internal/network-diagnostics GET은 서버 Worker에서 example.com/ 및 api.openai.com/에 HEAD만 수행한다. 키/쿠키/이미지/사용자입력/모델endpoint 전송 없음, redirect 수동/오류 모드 비교, 5초 제한, isolate당 결과 재사용. 같은 런타임에서 실제 env로 Request 객체만 구성하여 header 유효성도 확인하되 값을 노출하지 않는다. 장부/할당량과 무관한 읽기 진단이다. HTTPS 성공은 DNS/TLS/HTTP 경로가 동작한다는 증거이며 개별 TCP/DNS 인터페이스 검사를 의미하지 않는다. Sites 공식 문서상 raw TCP는 미지원. 실제 운영 결과는 배포 후 확인한다.
+
+## 2026-09-16 · 인증/레시피와 런타임 수정
+
+/api/ai는 이제 naenglog_member 세션을 검증한다. quota/cache 키는 브라우저별 익명 토큰 대신 서버 회원 ID를 사용하므로 같은 계정의 재로그인/기기 변경으로 횟수가 초기화되지 않는다. 기존 paid 장부 자체는 동일하게 유지한다. recipes는 클릭 시만 실행하며 최대입력6000/출력3000, 회원누적3회, 재시도0. 선택 재료만 Responses JSON schema로 전달하고 최소3개 결과·소유 ID·수량을 검증한다. 홈 안내는 로컬 규칙이므로 자동 유료 요청이 없다.
+
+Sites v7에서 HTTPS example.com은200, OpenAI 호스트는 manual모드421을 반환했으나 redirect:error Request 구성은 즉시 거절되었다. 이번 소스는 redirect:manual을 사용하며3xx를 따라가지 않고 실패 처리한다. 이는 모델 사용 성공이나 권한 검증을 의미하지 않는다. 키 없는 /v1/models GET만 무료 진단에 추가했다.
+
+운영 ledger revision5/halted=true, 영수증 테스트 잔여0, 미확정예약53.551원은 마지막 관측 상태다. 이번 작업에서는 키/가격/한도/장부를 변경하거나 유료 API를 호출하지 않는다. recipe 실제 실행은 별도 승인된 장부 복구 및 모델 접근 검증 후에만 가능하다. 신규 회원 인증에는 새 환경변수가 필요하지 않는다.

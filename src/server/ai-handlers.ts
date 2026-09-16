@@ -1,7 +1,8 @@
+import { selectedIngredients } from '../recipes';
 import { createAIService, AIServiceError } from '../ai-service';
 import { isRecord } from '../validation';
 import { validateImage } from '../image-input';
-import { readToken, sessionHash } from './handlers';
+import { AuthStore } from './auth';
 import {
   selectProvider,
   providerTimeout,
@@ -24,8 +25,8 @@ export function createAIHandler(
   return async (request: Request) => {
     if (request.headers.get('Origin') !== new URL(request.url).origin)
       return reply({ error: '이 사이트에서 다시 요청해주세요.' }, 403);
-    const token = readToken(request);
-    if (!token) return reply({ error: '냉장고를 먼저 열어주세요.' }, 401);
+    const user = await new AuthStore(db).member(request);
+    if (!user) return reply({ error: '냉장고를 먼저 열어주세요.' }, 401);
     if (!request.headers.get('Content-Type')?.startsWith('application/json'))
       return reply({ error: 'JSON 요청이 필요해요.' }, 415);
     const limit = 7 * 1024 * 1024;
@@ -56,7 +57,7 @@ export function createAIHandler(
       body = JSON.parse(new TextDecoder().decode(bytes));
       if (
         !isRecord(body) ||
-        !['analyze', 'interpret', 'briefing', 'config'].includes(
+        !['analyze', 'interpret', 'briefing', 'recipes', 'config'].includes(
           String(body.operation),
         )
       )
@@ -65,11 +66,11 @@ export function createAIHandler(
       return reply({ error: '분석 요청을 읽지 못했어요.' }, 400);
     }
     try {
-      const snapshot = await repository.find(await sessionHash(token));
+      const snapshot = await repository.find(user.id);
       if (!snapshot) return reply({ error: '냉장고를 다시 열어주세요.' }, 401);
       const provider = selectProvider(env);
       const budget = new AIBudget(db, env);
-      const session = await sessionHash(token);
+      const session = user.id;
       const invoke = <T>(
         feature: Feature,
         image: boolean,
@@ -89,6 +90,7 @@ export function createAIHandler(
             const options = (o: RequestOptions) => ({ ...o, ...extra });
             const guarded: AIProvider = {
               mode: provider.mode,
+              recipes: (i, o) => provider.recipes(i, options(o)),
               analyze: (i, o) => provider.analyze(i, options(o)),
               interpret: (t, s, o) => provider.interpret(t, s, options(o)),
               briefing: (s, o) => provider.briefing(s, options(o)),
@@ -125,6 +127,7 @@ export function createAIHandler(
       if (
         body.operation !== 'analyze' &&
         body.operation !== 'config' &&
+        body.operation !== 'recipes' &&
         JSON.stringify(snapshot.state).length > 24000
       )
         return reply(
@@ -137,7 +140,23 @@ export function createAIHandler(
       if (body.operation === 'config')
         return reply({ mode: provider.mode, result: {} });
       let result: unknown;
-      if (body.operation === 'analyze') {
+      if (body.operation === 'recipes') {
+        let items;
+        try {
+          items = selectedIngredients(snapshot.state, body.itemIds);
+        } catch {
+          return reply(
+            { error: '선택한 재료의 소유권·수량·관리기한을 확인해주세요.' },
+            400,
+          );
+        }
+        result = await invoke(
+          'recipes',
+          false,
+          { itemIds: items.map((i) => i.id).sort(), ...stateKey },
+          (s) => s.recipes(items, request.signal),
+        );
+      } else if (body.operation === 'analyze') {
         if (
           !isRecord(body.input) ||
           !['직접 입력', '영수증', '온라인 캡처'].includes(

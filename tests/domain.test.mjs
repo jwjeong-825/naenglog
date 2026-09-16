@@ -15,6 +15,8 @@ const out = path.join(tmpdir(), 'naenglog-tests-' + Date.now());
 mkdirSync(out);
 mkdirSync(path.join(out, 'server'));
 for (const name of [
+  'recipes',
+  'server/auth',
   'analysis',
   'receipt-resolution',
   'server/ai-budget',
@@ -41,14 +43,18 @@ for (const name of [
       },
     })
     .outputText.replace(/from '(.+?)'/g, (match, specifier) =>
-      specifier.endsWith('.json')
+      specifier === 'bcryptjs'
         ? "from '" +
-          pathToFileURL(path.resolve('schemas/analysis-result.schema.json'))
-            .href +
+          pathToFileURL(path.resolve('node_modules/bcryptjs/index.js')).href +
           "'"
-        : specifier.startsWith('.')
-          ? "from '" + specifier + ".mjs'"
-          : match,
+        : specifier.endsWith('.json')
+          ? "from '" +
+            pathToFileURL(path.resolve('schemas/analysis-result.schema.json'))
+              .href +
+            "'"
+          : specifier.startsWith('.')
+            ? "from '" + specifier + ".mjs'"
+            : match,
     );
   writeFileSync(path.join(out, `${name}.mjs`), code);
 }
@@ -285,9 +291,52 @@ const { DatabaseSync } = await import('node:sqlite');
 const { InventoryRepository } = await import(
   pathToFileURL(path.join(out, 'server/repository.mjs'))
 );
-const { createInventoryHandlers } = await import(
-  pathToFileURL(path.join(out, 'server/handlers.mjs'))
+const { createInventoryHandlers: authenticatedInventoryHandlers } =
+  await import(pathToFileURL(path.join(out, 'server/handlers.mjs')));
+const { AuthStore } = await import(
+  pathToFileURL(path.join(out, 'server/auth.mjs'))
 );
+let fixtureNumber = 0;
+// Adapt pre-account regression fixtures to an authenticated session. Production handlers
+// are tested directly below and never auto-create anonymous sessions.
+function legacyFixtureHandlers(repository) {
+  const auth = new AuthStore(repository.db),
+    handlers = authenticatedInventoryHandlers(repository, auth);
+  return {
+    ...handlers,
+    GET: async (request) => {
+      if (request.headers.has('Cookie')) return handlers.GET(request);
+      fixtureNumber++;
+      const origin = new URL(request.url).origin;
+      const registered = await auth.POST(
+        new Request(origin + '/api/auth', {
+          method: 'POST',
+          headers: {
+            Origin: origin,
+            'Content-Type': 'application/json',
+            'CF-Connecting-IP': String(fixtureNumber),
+          },
+          body: JSON.stringify({
+            operation: 'register',
+            name: 'Fixture',
+            email: `fixture${fixtureNumber}@example.test`,
+            phone: '010' + String(fixtureNumber).padStart(8, '0'),
+            password: 'test-password-only-123',
+            confirmPassword: 'test-password-only-123',
+            remember: true,
+          }),
+        }),
+      );
+      assert.equal(registered.status, 201);
+      const cookie = registered.headers.get('set-cookie');
+      const response = await handlers.GET(
+        new Request(request.url, { headers: { Cookie: cookie.split(';')[0] } }),
+      );
+      response.headers.set('set-cookie', cookie);
+      return response;
+    },
+  };
+}
 function makeRepository() {
   const sql = new DatabaseSync(':memory:');
   for (const file of readdirSync('drizzle')
@@ -407,15 +456,12 @@ test('legacy import is validated, atomic and cannot overwrite existing server wo
 test('HTTP API protects session cookies and rejects cross-origin or malformed writes', async () => {
   const { repository: r, sql } = makeRepository();
   try {
-    const api = createInventoryHandlers(r),
+    const api = legacyFixtureHandlers(r),
       response = await api.GET(
         new Request('https://fridge.test/api/inventory'),
       );
     assert.equal(response.status, 200);
-    assert.match(
-      response.headers.get('set-cookie'),
-      /HttpOnly; SameSite=Strict/,
-    );
+    assert.match(response.headers.get('set-cookie'), /HttpOnly; SameSite=Lax/);
     assert.match(response.headers.get('set-cookie'), /Secure/);
     assert.match(response.headers.get('cache-control'), /no-store/);
     const cookie = response.headers.get('set-cookie').split(';')[0];
@@ -541,7 +587,7 @@ test('server AI requires own session, validates image bytes, and runs without ex
   );
   const { repository: r, sql } = makeRepository();
   try {
-    const inventory = createInventoryHandlers(r);
+    const inventory = legacyFixtureHandlers(r);
     const first = await inventory.GET(
       new Request('https://naenglog.test/api/inventory'),
     );
@@ -1104,7 +1150,7 @@ test('OpenAI image analysis preserves three classifications, usage and confirmat
     calls++;
     assert.equal(url, 'https://api.openai.com/v1/responses');
     assert.ok(init.signal);
-    assert.equal(init.redirect, 'error');
+    assert.equal(init.redirect, 'manual');
     const body = JSON.parse(init.body);
     assert.equal(body.store, false);
     assert.deepEqual(body.tools, []);
@@ -1329,7 +1375,7 @@ test('OpenAI HTTP integration checks budget before fetch, records usage and serv
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
-    const first = await createInventoryHandlers(repository).GET(
+    const first = await legacyFixtureHandlers(repository).GET(
       new Request('https://naenglog.test/api/inventory'),
     );
     const cookie = first.headers.get('set-cookie').split(';')[0];
@@ -1566,79 +1612,615 @@ test('Budget persists timeout diagnostics without resetting uncertain costs', as
 });
 
 test('Approved receipt recovery preserves unknown costs and history and is idempotent', () => {
-  const sql=new DatabaseSync(':memory:');
+  const sql = new DatabaseSync(':memory:');
   try {
-    sql.exec('CREATE TABLE ai_budget(id TEXT PRIMARY KEY,snapshot TEXT NOT NULL,revision INTEGER NOT NULL)');
-    const original={total:12358,halted:true,entries:[{status:'uncertain',usage:null,cost:12358,reserved:12358,id:'prior'}]};
-    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(original),2);
-    const migration=readFileSync('drizzle/0002_receipt_test_recovery.sql','utf8');
+    sql.exec(
+      'CREATE TABLE ai_budget(id TEXT PRIMARY KEY,snapshot TEXT NOT NULL,revision INTEGER NOT NULL)',
+    );
+    const original = {
+      total: 12358,
+      halted: true,
+      entries: [
+        {
+          status: 'uncertain',
+          usage: null,
+          cost: 12358,
+          reserved: 12358,
+          id: 'prior',
+        },
+      ],
+    };
+    sql
+      .prepare('INSERT INTO ai_budget VALUES(?,?,?)')
+      .run('championship-2026', JSON.stringify(original), 2);
+    const migration = readFileSync(
+      'drizzle/0002_receipt_test_recovery.sql',
+      'utf8',
+    );
     sql.exec(migration);
-    const first=sql.prepare('SELECT * FROM ai_budget').get(), after=JSON.parse(first.snapshot);
-    assert.equal(after.halted,false);
-    assert.equal(after.total,original.total);
-    assert.deepEqual(after.entries,original.entries);
-    assert.equal(after.receiptTest.remaining,1);
-    assert.equal(first.revision,3);
+    const first = sql.prepare('SELECT * FROM ai_budget').get(),
+      after = JSON.parse(first.snapshot);
+    assert.equal(after.halted, false);
+    assert.equal(after.total, original.total);
+    assert.deepEqual(after.entries, original.entries);
+    assert.equal(after.receiptTest.remaining, 1);
+    assert.equal(first.revision, 3);
     sql.exec(migration);
-    assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(),first);
-    sql.prepare('UPDATE ai_budget SET snapshot=?,revision=2').run(JSON.stringify({...original,entries:[{status:'completed',usage:{inputTokens:1},cost:12358}]}));
+    assert.deepEqual(sql.prepare('SELECT * FROM ai_budget').get(), first);
+    sql.prepare('UPDATE ai_budget SET snapshot=?,revision=2').run(
+      JSON.stringify({
+        ...original,
+        entries: [
+          { status: 'completed', usage: { inputTokens: 1 }, cost: 12358 },
+        ],
+      }),
+    );
     sql.exec(migration);
-    assert.equal(JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot).halted,true);
-  } finally {sql.close();}
+    assert.equal(
+      JSON.parse(sql.prepare('SELECT snapshot FROM ai_budget').get().snapshot)
+        .halted,
+      true,
+    );
+  } finally {
+    sql.close();
+  }
 });
 
 test('Receipt recovery allows only one globally reserved image and blocks background AI', async () => {
-  const {db,sql}=makeRepository();
+  const { db, sql } = makeRepository();
   try {
-    const ledger={total:12358,halted:false,entries:[],receiptTest:{remaining:1,recovery:'test'}};
-    sql.prepare('INSERT INTO ai_budget VALUES(?,?,?)').run('championship-2026',JSON.stringify(ledger),3);
-    const budget=new AIBudget(db,openEnv());
-    let calls=0;
-    const work=async(o)=>{calls++;o.reportUsage({model:'gpt-5.4-mini',inputTokens:10,outputTokens:10});return {ok:true};};
-    await assert.rejects(budget.run('home','briefing',true,false,{},work));
-    await assert.rejects(budget.run('text','analyze',true,false,{},work));
-    assert.equal(calls,0);
-    const results=await Promise.allSettled([
-      budget.run('one','analyze',true,true,{image:'1'},work),
-      budget.run('two','analyze',true,true,{image:'2'},work),
+    const ledger = {
+      total: 12358,
+      halted: false,
+      entries: [],
+      receiptTest: { remaining: 1, recovery: 'test' },
+    };
+    sql
+      .prepare('INSERT INTO ai_budget VALUES(?,?,?)')
+      .run('championship-2026', JSON.stringify(ledger), 3);
+    const budget = new AIBudget(db, openEnv());
+    let calls = 0;
+    const work = async (o) => {
+      calls++;
+      o.reportUsage({
+        model: 'gpt-5.4-mini',
+        inputTokens: 10,
+        outputTokens: 10,
+      });
+      return { ok: true };
+    };
+    await assert.rejects(budget.run('home', 'briefing', true, false, {}, work));
+    await assert.rejects(budget.run('text', 'analyze', true, false, {}, work));
+    assert.equal(calls, 0);
+    const results = await Promise.allSettled([
+      budget.run('one', 'analyze', true, true, { image: '1' }, work),
+      budget.run('two', 'analyze', true, true, { image: '2' }, work),
     ]);
-    assert.equal(results.filter(x=>x.status==='fulfilled').length,1);
-    assert.equal(calls,1);
-    await assert.rejects(budget.run('three','analyze',true,true,{image:'3'},work));
-    assert.equal(calls,1);
-    const row=sql.prepare('SELECT snapshot FROM ai_budget WHERE id=?').get('championship-2026');
-    const saved=JSON.parse(row.snapshot);
-    assert.equal(saved.receiptTest.remaining,0);
-    assert.equal(saved.entries.length,1);
-    assert.ok(saved.total>=12358);
-  } finally {sql.close();}
+    assert.equal(results.filter((x) => x.status === 'fulfilled').length, 1);
+    assert.equal(calls, 1);
+    await assert.rejects(
+      budget.run('three', 'analyze', true, true, { image: '3' }, work),
+    );
+    assert.equal(calls, 1);
+    const row = sql
+      .prepare('SELECT snapshot FROM ai_budget WHERE id=?')
+      .get('championship-2026');
+    const saved = JSON.parse(row.snapshot);
+    assert.equal(saved.receiptTest.remaining, 0);
+    assert.equal(saved.entries.length, 1);
+    assert.ok(saved.total >= 12358);
+  } finally {
+    sql.close();
+  }
 });
 
 test('Network categories never return raw exception text', async () => {
-  const {classifyNetworkError}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
-  for (const [error,category] of [
-    [{cause:{code:'ENOTFOUND'},message:'PRIVATE'},'dns_failure'],
-    [{code:'CERT_HAS_EXPIRED'},'tls_failure'],
-    [{code:'ECONNREFUSED'},'connection_refused'],
-    [{code:'ECONNRESET'},'connection_reset'],
-    [{message:'Fetch is not allowed PRIVATE'},'runtime_restriction'],
-    [{message:'Invalid header value PRIVATE'},'request_construction'],
-    [{message:'PRIVATE'},'generic_network_failure'],
-  ]) assert.equal(classifyNetworkError(error),category);
+  const { classifyNetworkError } = await import(
+    pathToFileURL(path.join(out, 'server/network-diagnostics.mjs'))
+  );
+  for (const [error, category] of [
+    [{ cause: { code: 'ENOTFOUND' }, message: 'PRIVATE' }, 'dns_failure'],
+    [{ code: 'CERT_HAS_EXPIRED' }, 'tls_failure'],
+    [{ code: 'ECONNREFUSED' }, 'connection_refused'],
+    [{ code: 'ECONNRESET' }, 'connection_reset'],
+    [{ message: 'Fetch is not allowed PRIVATE' }, 'runtime_restriction'],
+    [{ message: 'Invalid header value PRIVATE' }, 'request_construction'],
+    [{ message: 'PRIVATE' }, 'generic_network_failure'],
+  ])
+    assert.equal(classifyNetworkError(error), category);
 });
 
 test('Network probes are cached fixed HEAD requests without credentials or inference', async () => {
-  const {networkProbe}=await import(pathToFileURL(path.join(out,'server/network-diagnostics.mjs')));
-  const calls=[];
-  const fake=async(url,options)=>{calls.push({url,options});return new Response(null,{status:403});};
-  const results=await networkProbe(fake);
+  const { networkProbe } = await import(
+    pathToFileURL(path.join(out, 'server/network-diagnostics.mjs'))
+  );
+  const calls = [];
+  const fake = async (url, options) => {
+    calls.push({ url, options });
+    return new Response(null, { status: 403 });
+  };
+  const results = await networkProbe(fake);
   await networkProbe(fake);
-  assert.equal(calls.length,3);
-  for(const {url,options} of calls){
-    assert.ok(['https://example.com/','https://api.openai.com/'].includes(url));
-    assert.equal(options.method,'HEAD');
-    assert.equal(options.headers,undefined);
-    assert.equal(options.body,undefined);
+  assert.equal(calls.length, 4);
+  for (const { url, options } of calls) {
+    assert.ok(
+      [
+        'https://example.com/',
+        'https://api.openai.com/',
+        'https://api.openai.com/v1/models',
+      ].includes(url),
+    );
+    assert.equal(options.method, url.endsWith('/v1/models') ? 'GET' : 'HEAD');
+    assert.equal(options.headers, undefined);
+    assert.equal(options.body, undefined);
   }
-  assert.ok(results.every(x=>x.httpStatus===403));
+  assert.ok(results.every((x) => x.httpStatus === 403));
+});
+
+const { selectedIngredients, validateRecipes, mockRecipes } = await import(
+  pathToFileURL(path.join(out, 'recipes.mjs'))
+);
+const { createAIHandler: memberAIHandler } = await import(
+  pathToFileURL(path.join(out, 'server/ai-handlers.mjs'))
+);
+function authRequest(body, cookie = '', ip = '192.0.2.1') {
+  return new Request('https://member.test/api/auth', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://member.test',
+      'Content-Type': 'application/json',
+      Cookie: cookie,
+      'CF-Connecting-IP': ip,
+    },
+    body: JSON.stringify(body),
+  });
+}
+const credentials = (n = 1) => ({
+  operation: 'register',
+  name: '테스트 회원',
+  email: `member${n}@example.test`,
+  phone: '010' + String(n).padStart(8, '0'),
+  password: 'Unique-test-pass-2026',
+  confirmPassword: 'Unique-test-pass-2026',
+  remember: true,
+});
+const cookieOf = (r) => r.headers.get('set-cookie').split(';')[0];
+const memberGet = (cookie) =>
+  new Request('https://member.test/api/inventory', {
+    headers: { Cookie: cookie },
+  });
+const memberPost = (cookie, body) =>
+  new Request('https://member.test/api/inventory', {
+    method: 'POST',
+    headers: {
+      Origin: 'https://member.test',
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+
+test('registration validates required fields, creates bcrypt hash only, and never returns credentials', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db),
+      c = credentials();
+    for (const bad of [
+      { ...c, name: '' },
+      { ...c, email: 'bad' },
+      { ...c, phone: '123' },
+      { ...c, confirmPassword: 'different' },
+    ])
+      assert.equal((await auth.POST(authRequest(bad))).status, 400);
+    const r = await auth.POST(authRequest(c));
+    assert.equal(r.status, 201);
+    const body = await r.json();
+    assert.deepEqual(Object.keys(body.user).sort(), [
+      'email',
+      'id',
+      'name',
+      'phone',
+    ]);
+    const row = sql.prepare('SELECT * FROM users').get();
+    assert.match(row.password_hash, /^\$2[aby]\$12\$/);
+    assert.ok(!JSON.stringify(row).includes(c.password));
+    assert.ok(!JSON.stringify(body).includes(row.password_hash));
+    assert.ok(
+      !JSON.stringify(sql.prepare('SELECT * FROM sessions').get()).includes(
+        cookieOf(r).split('=')[1],
+      ),
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('normalized duplicate email and phone are independently blocked', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db);
+    assert.equal((await auth.POST(authRequest(credentials()))).status, 201);
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest({ ...credentials(2), email: ' MEMBER1@EXAMPLE.TEST ' }),
+        )
+      ).status,
+      409,
+    );
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest({ ...credentials(2), phone: '+82 10-0000-0001' }),
+        )
+      ).status,
+      409,
+    );
+    assert.equal(sql.prepare('SELECT count(*) as n FROM users').get().n, 1);
+  } finally {
+    sql.close();
+  }
+});
+test('email and phone login work; unknown account and wrong password have identical errors', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db);
+    await auth.POST(authRequest(credentials()));
+    const request = (identifier, password = 'Unique-test-pass-2026') =>
+      auth.POST(authRequest({ operation: 'login', identifier, password }));
+    const wrong = await request('member1@example.test', 'Wrong-password-2026'),
+      missing = await request('missing@example.test');
+    assert.equal(wrong.status, 401);
+    assert.equal(missing.status, 401);
+    assert.deepEqual(await wrong.json(), await missing.json());
+    assert.equal((await request(' MEMBER1@EXAMPLE.TEST ')).status, 200);
+    assert.equal((await request('010-0000-0001')).status, 200);
+  } finally {
+    sql.close();
+  }
+});
+test('remember me survives a new request after days; normal session omits Max-Age and expires', async () => {
+  const { db, sql } = makeRepository();
+  let now = Date.now();
+  try {
+    const auth = new AuthStore(db, () => now);
+    const r = await auth.POST(authRequest(credentials()));
+    assert.match(
+      r.headers.get('set-cookie'),
+      /HttpOnly; SameSite=Lax; Secure; Max-Age=2592000/,
+    );
+    const persistent = cookieOf(r);
+    now += 5 * 86400000;
+    assert.equal((await auth.GET(memberGet(persistent))).status, 200);
+    const normal = await auth.POST(
+      authRequest({
+        operation: 'login',
+        identifier: 'member1@example.test',
+        password: credentials().password,
+        remember: false,
+      }),
+    );
+    assert.equal(normal.status, 200);
+    assert.ok(!normal.headers.get('set-cookie').includes('Max-Age'));
+    now += 13 * 3600000;
+    assert.equal((await auth.GET(memberGet(cookieOf(normal)))).status, 401);
+    assert.equal((await auth.GET(memberGet(persistent))).status, 200);
+    now += 30 * 86400000;
+    assert.equal((await auth.GET(memberGet(persistent))).status, 401);
+  } finally {
+    sql.close();
+  }
+});
+test('logout revokes hashed token and deletes cookie; CSRF and oversized auth requests rejected', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db),
+      r = await auth.POST(authRequest(credentials())),
+      cookie = cookieOf(r);
+    const logout = await auth.POST(
+      authRequest({ operation: 'logout' }, cookie),
+    );
+    assert.equal(logout.status, 200);
+    assert.match(logout.headers.get('set-cookie'), /Max-Age=0/);
+    assert.equal((await auth.GET(memberGet(cookie))).status, 401);
+    const attack = authRequest(credentials(2));
+    attack.headers.set('Origin', 'https://attacker.test');
+    assert.equal((await auth.POST(attack)).status, 403);
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest({ operation: 'register', name: 'x'.repeat(5000) }),
+        )
+      ).status,
+      413,
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('login throttling is durable across AuthStore instances', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    for (let i = 0; i < 10; i++)
+      await new AuthStore(db).POST(
+        authRequest({
+          operation: 'login',
+          identifier: 'nobody@example.test',
+          password: 'short',
+        }),
+      );
+    assert.equal(
+      (
+        await new AuthStore(db).POST(
+          authRequest({
+            operation: 'login',
+            identifier: 'nobody@example.test',
+            password: 'short',
+          }),
+        )
+      ).status,
+      429,
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('member APIs return 401 for anonymous and legacy cookies; new accounts start empty', async () => {
+  const { db, sql, repository: legacy } = makeRepository();
+  try {
+    const auth = new AuthStore(db),
+      r = new InventoryRepository(db, 'mock', true),
+      http = authenticatedInventoryHandlers(r, auth);
+    await legacy.create('legacy-browser');
+    const before = sql
+      .prepare('SELECT snapshot FROM inventories')
+      .get().snapshot;
+    assert.equal((await http.GET(memberGet(''))).status, 401);
+    assert.equal(
+      (await http.GET(memberGet('naenglog_session=' + 'a'.repeat(64)))).status,
+      401,
+    );
+    const session = await auth.POST(authRequest(credentials())),
+      cookie = cookieOf(session),
+      initial = await http.GET(memberGet(cookie));
+    assert.equal(initial.status, 200);
+    const body = await initial.json();
+    assert.equal(body.state.items.length, 0);
+    assert.equal(body.state.purchases.length, 0);
+    assert.equal(body.state.transactions.length, 0);
+    assert.equal(body.state.user.mode, 'member');
+    assert.equal(
+      (
+        await http.POST(
+          memberPost(cookie, { kind: 'import', revision: 0, state: d.seed() }),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      sql.prepare('SELECT snapshot FROM inventories').get().snapshot,
+      before,
+    );
+    const aiHandler = memberAIHandler(r, {}, db);
+    assert.equal(
+      (
+        await aiHandler(
+          memberPost('', { operation: 'recipes', itemIds: ['a'] }),
+        )
+      ).status,
+      401,
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('A and B have isolated inventory, commands, history and recipe selection despite forged userId', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db),
+      r = new InventoryRepository(db, 'mock', true),
+      http = authenticatedInventoryHandlers(r, auth);
+    const ar = await auth.POST(authRequest(credentials(1))),
+      br = await auth.POST(authRequest(credentials(2))),
+      a = cookieOf(ar),
+      b = cookieOf(br),
+      aid = (await ar.json()).user.id;
+    await http.GET(memberGet(a));
+    await http.GET(memberGet(b));
+    const rows = ['계란', '두부', '대파'].map((name) => ({
+      name,
+      productName: name,
+      quantity: 3,
+      unit: '개',
+      category: '식품',
+      storage: '냉장',
+      purchasedAt: d.today(),
+    }));
+    const added = await http.POST(
+      memberPost(a, {
+        kind: 'purchase',
+        revision: 0,
+        batchId: 'a-purchase',
+        rows,
+        source: '직접 입력',
+      }),
+    );
+    assert.equal(added.status, 200);
+    const state = (await added.json()).state;
+    const bstate = await (
+      await http.GET(
+        new Request('https://member.test/api/inventory?userId=' + aid, {
+          headers: { Cookie: b },
+        }),
+      )
+    ).json();
+    assert.equal(bstate.state.items.length, 0);
+    assert.equal(bstate.state.transactions.length, 0);
+    const bad = await http.POST(
+      memberPost(b, {
+        userId: aid,
+        kind: 'command',
+        revision: 0,
+        command: {
+          id: d.id(),
+          itemId: state.items[0].id,
+          action: 'consume',
+          quantity: 1,
+        },
+      }),
+    );
+    assert.equal(bad.status, 400);
+    const aiHandler = memberAIHandler(r, {}, db);
+    const denied = await aiHandler(
+      memberPost(b, {
+        operation: 'recipes',
+        userId: aid,
+        itemIds: state.items.map((i) => i.id),
+      }),
+    );
+    assert.equal(denied.status, 400);
+    const ok = await aiHandler(
+      memberPost(a, {
+        operation: 'recipes',
+        itemIds: state.items.map((i) => i.id),
+      }),
+    );
+    assert.equal(ok.status, 200);
+    const result = await ok.json();
+    assert.equal(result.result.recipes.length, 3);
+    assert.ok(
+      result.result.recipes.every(
+        (recipe) =>
+          recipe.usedInventoryItems.length === 3 &&
+          recipe.usedInventoryItems.every((i) =>
+            state.items.some((own) => own.id === i.itemId),
+          ),
+      ),
+    );
+    assert.equal((await r.find(aid)).state.items[0].quantity, 3);
+  } finally {
+    sql.close();
+  }
+});
+test('recipe validation excludes expired/empty/foreign selections and rejects invented IDs or excessive amounts', () => {
+  const state = d.seed(),
+    items = state.items
+      .filter((i) => d.daysLeft(i.expectedAt) >= 0)
+      .slice(0, 3),
+    ids = items.map((i) => i.id);
+  assert.equal(selectedIngredients(state, ids).length, 3);
+  assert.throws(() => selectedIngredients(state, [ids[0], ids[0]]));
+  assert.throws(() => selectedIngredients(state, ['foreign']));
+  const expired = structuredClone(state);
+  expired.items.find((i) => i.id === ids[0]).expectedAt = d.addDays(
+    d.today(),
+    -1,
+  );
+  assert.throws(() => selectedIngredients(expired, ids));
+  const zero = structuredClone(state);
+  zero.items.find((i) => i.id === ids[0]).quantity = 0;
+  assert.throws(() => selectedIngredients(zero, ids));
+  const good = mockRecipes(items);
+  assert.equal(validateRecipes(good, items).recipes.length, 3);
+  const bad = structuredClone(good);
+  bad.recipes[0].usedInventoryItems[0].quantity = 10001;
+  assert.throws(() => validateRecipes(bad, items));
+  bad.recipes[0].usedInventoryItems[0].quantity = 1;
+  bad.recipes[0].usedInventoryItems[0].itemId = 'foreign';
+  assert.throws(() => validateRecipes(bad, items));
+  assert.throws(() =>
+    validateRecipes({ recipes: good.recipes.slice(0, 2) }, items),
+  );
+});
+test('recipe budget retains global halt and has separate 3-request quota with zero retries', async () => {
+  const { db, sql } = makeRepository();
+  let now = Date.now();
+  try {
+    const budget = new AIBudget(db, {}, () => now);
+    for (let i = 0; i < 3; i++) {
+      await budget.run('member', 'recipes', false, false, { i }, async () => ({
+        recipes: [],
+      }));
+      now += 4000;
+    }
+    await assert.rejects(
+      budget.run('member', 'recipes', false, false, { i: 4 }, async () => ({})),
+      (e) => e.status === 429,
+    );
+    const env = budgetEnv(now);
+    sql
+      .prepare('INSERT INTO ai_budget(id,snapshot,revision) VALUES (?,?,0)')
+      .run(
+        'championship-2026',
+        JSON.stringify({
+          total: 53551,
+          halted: true,
+          entries: [],
+          receiptTest: { remaining: 0, recovery: 'keep' },
+        }),
+      );
+    let called = false;
+    await assert.rejects(
+      new AIBudget(db, env, () => now).run(
+        'member',
+        'recipes',
+        true,
+        false,
+        {},
+        async () => {
+          called = true;
+        },
+      ),
+    );
+    assert.equal(called, false);
+    assert.equal(
+      JSON.parse(
+        sql
+          .prepare(
+            "SELECT snapshot FROM ai_budget WHERE id='championship-2026'",
+          )
+          .get().snapshot,
+      ).halted,
+      true,
+    );
+  } finally {
+    sql.close();
+  }
+});
+
+test('OpenAI recipes send only selected inventory, validate strict structure, and report usage via one mock fetch', async () => {
+  const state = d.seed(),
+    items = selectedIngredients(
+      state,
+      state.items
+        .filter((i) => d.daysLeft(i.expectedAt) >= 0)
+        .slice(0, 3)
+        .map((i) => i.id),
+    );
+  let calls = 0,
+    usage;
+  const provider = createOpenAIProvider(openEnv(), async (_url, init) => {
+    calls++;
+    const body = JSON.parse(init.body);
+    assert.equal(body.text.format.type, 'json_schema');
+    assert.equal(body.max_output_tokens, 3000);
+    assert.equal(init.redirect, 'manual');
+    const sent = JSON.stringify(body.input);
+    for (const item of items) assert.ok(sent.includes(item.id));
+    for (const item of state.items.filter((i) => !items.includes(i)))
+      assert.ok(!sent.includes(item.id));
+    return openResponse(mockRecipes(items));
+  });
+  const result = await provider.recipes(items, {
+    ...openOptions('recipes'),
+    reportUsage: (value) => {
+      usage = value;
+    },
+  });
+  assert.equal(result.recipes.length, 3);
+  assert.equal(calls, 1);
+  assert.ok(usage.inputTokens > 0);
+  const malformed = createOpenAIProvider(openEnv(), async () =>
+    openResponse({ recipes: [] }),
+  );
+  await assert.rejects(malformed.recipes(items, openOptions('recipes')));
 });

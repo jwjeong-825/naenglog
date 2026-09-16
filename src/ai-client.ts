@@ -1,3 +1,5 @@
+import { validateRecipes } from './recipes';
+import type { Item } from './domain';
 import {
   createAIService,
   AIServiceError,
@@ -19,6 +21,8 @@ async function call(operation: string, payload: object, signal?: AbortSignal) {
   });
   const body = await response.json();
   if (!isRecord(body)) throw new Error('Invalid AI response');
+  if (response.status === 401 && typeof window !== 'undefined')
+    window.dispatchEvent(new Event('naenglog-auth-required'));
   if (!response.ok)
     throw new AIServiceError(
       body.code === 'trial_limit' ||
@@ -43,6 +47,8 @@ async function call(operation: string, payload: object, signal?: AbortSignal) {
 const transport = createAIService(
   {
     mode: 'remote',
+    recipes: (items, o) =>
+      call('recipes', { itemIds: items.map((i) => i.id) }, o.signal),
     analyze: (input, o) => call('analyze', { input }, o.signal),
     interpret: (text, _state, o) => call('interpret', { text }, o.signal),
     briefing: (_state, o) => call('briefing', {}, o.signal),
@@ -53,6 +59,8 @@ export const ai = {
   get mode() {
     return mode;
   },
+  recipes: async (items: Item[], signal?: AbortSignal) =>
+    validateRecipes(await transport.recipes(items, signal), items),
   config: async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10000);
