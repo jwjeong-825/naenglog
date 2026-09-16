@@ -389,6 +389,8 @@ h3 {
   font-weight: 750;
 }
 .badge.danger {
+  color: var(--destructive);
+  background: color-mix(in oklch, var(--destructive) 10%, white);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -874,6 +876,11 @@ label [data-slot='select-trigger'] {
 }
 .registration-footer {
   padding-top: 8px;
+}
+.overdue-guidance {
+  color: var(--destructive);
+  font-weight: 650;
+  line-height: 1.6;
 }
 @media (max-width: 480px) {
   main {

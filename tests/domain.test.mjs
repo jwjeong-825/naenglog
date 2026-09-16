@@ -485,6 +485,67 @@ test('calendar dates agree at Korean midnight regardless of server timezone', ()
   assert.equal(d.calendarDate('2026-09-08T15:00:00Z'), '2026-09-09');
   assert.equal(d.calendarDate('2026-09-08T14:59:59Z'), '2026-09-08');
 });
+test('D-day labels and urgency use expectedAt instead of purchase age', () => {
+  assert.equal(d.ddayLabel(3), 'D-3');
+  assert.equal(d.ddayLabel(0), 'D-Day');
+  assert.equal(d.ddayLabel(-2), 'D+2');
+
+  const state = d.seed();
+  const today = d.today();
+  const oldPurchase = d.addDays(today, -500);
+  state.items = [
+    {
+      ...state.items[0],
+      id: 'future-despite-old-purchase',
+      purchasedAt: oldPurchase,
+      expiryDate: d.addDays(today, 3),
+      expectedAt: oldPurchase,
+    },
+    {
+      ...state.items[0],
+      id: 'overdue',
+      purchasedAt: today,
+      expiryDate: d.addDays(today, -2),
+      expectedAt: today,
+    },
+  ];
+  const ranked = d.ranked(state);
+  assert.equal(ranked[0].id, 'overdue');
+  assert.equal(ranked[0].days, -2);
+  assert.equal(ranked[1].days, 3);
+  assert.equal(ranked[1].expectedAt, d.addDays(today, 3));
+});
+test('expected dates use normalized food identity, storage and printed expiry', () => {
+  const purchasedAt = '2026-09-01';
+  const template = {
+    ...d.seed().analyses[0].result[0],
+    meaning: { normalizedFoodName: '버섯' },
+  };
+  const cases = [
+    ['무항생제 계란', '계란', '냉장', 21],
+    ['서울우유', '우유', '냉장', 7],
+    ['풀무원 국산콩 두부', '두부', '냉장', 5],
+    ['신선한 대파', '대파', '냉장', 7],
+  ];
+  for (const [name, normalizedFoodName, storage, days] of cases) {
+    const draft = structuredClone(template);
+    draft.name = name;
+    draft.purchasedAt = purchasedAt;
+    draft.storage = storage;
+    draft.expiryDate = undefined;
+    draft.meaning.normalizedFoodName = normalizedFoodName;
+    assert.equal(d.expected(draft), d.addDays(purchasedAt, days));
+    assert.equal(draft.name, name);
+  }
+
+  const printed = structuredClone(template);
+  printed.name = '서울우유';
+  printed.meaning.normalizedFoodName = '우유';
+  printed.purchasedAt = purchasedAt;
+  printed.storage = '냉장';
+  printed.expiryDate = '2026-10-15';
+  assert.equal(d.expected(printed), '2026-10-15');
+});
 
 test('product semantics preserve packaging, composite meals and explicit review', async () => {
   const rows = await ai.analyze({

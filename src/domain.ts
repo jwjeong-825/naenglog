@@ -99,8 +99,44 @@ export const foods: Record<
     days: [5, 30, 0],
     emoji: '◻️',
   },
+  대파: { category: '채소', storage: '냉장', days: [7, 30, 3], emoji: '🌿' },
+  채소: { category: '채소', storage: '냉장', days: [7, 30, 3], emoji: '🥬' },
+  김치: {
+    category: '가공식품',
+    storage: '냉장',
+    days: [30, 90, 3],
+    emoji: '🥬',
+  },
+  라면: {
+    category: '가공식품',
+    storage: '실온',
+    days: [14, 30, 180],
+    emoji: '🍜',
+  },
+  간장: {
+    category: '조미료',
+    storage: '실온',
+    days: [90, 180, 365],
+    emoji: '🫙',
+  },
+  즉석밥: {
+    category: '가공식품',
+    storage: '실온',
+    days: [7, 30, 180],
+    emoji: '🍚',
+  },
 };
 export function expected(d: Draft) {
+  if (d.expiryDate) return d.expiryDate;
+  const normalizedFoodName = d.meaning?.normalizedFoodName.trim();
+  const food =
+    (normalizedFoodName && foods[normalizedFoodName]) || foods[d.name];
+  return addDays(
+    d.purchasedAt,
+    (food?.days ?? [3, 14, 1])[['냉장', '냉동', '실온'].indexOf(d.storage)],
+  );
+}
+function legacyExpected(d: Draft) {
   if (d.expiryDate) return d.expiryDate;
   return addDays(
     d.purchasedAt,
@@ -109,6 +145,8 @@ export function expected(d: Draft) {
     ],
   );
 }
+export const ddayLabel = (days: number) =>
+  days < 0 ? `D+${Math.abs(days)}` : days === 0 ? 'D-Day' : `D-${days}`;
 export function validateDraft(d: Draft) {
   assertDraft(d);
   if (
@@ -258,7 +296,12 @@ export function ranked(state: State) {
   return state.items
     .filter((i) => i.quantity > 0)
     .map((i) => {
-      const days = daysLeft(i.expectedAt);
+      // Upgrade only dates produced by the former display-name lookup. Preserve
+      // explicit expiry dates and any independently managed expectedAt value.
+      const expectedAt =
+        i.expiryDate ??
+        (i.expectedAt === legacyExpected(i) ? expected(i) : i.expectedAt);
+      const days = daysLeft(expectedAt);
       const age = -daysLeft(i.purchasedAt);
       const recent = state.transactions.some(
         (t) =>
@@ -274,12 +317,13 @@ export function ranked(state: State) {
         (recent ? 3 : 0);
       return {
         ...i,
+        expectedAt,
         days,
         score,
         reason: `${i.storage} 보관 · 구매 후 ${age}일, ${days < 0 ? '예상 시점이 지났어요' : `${days}일 여유`} · ${i.quantity}${i.unit} 남음`,
       };
     })
-    .sort((a, b) => b.score - a.score);
+    .sort((a, b) => a.days - b.days || b.score - a.score);
 }
 export function seed(): State {
   let s: State = {
