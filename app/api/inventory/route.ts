@@ -13,6 +13,7 @@ function handlers() {
         ? 'remote'
         : 'mock',
     ),
+    db,
   );
 }
 export async function GET(request: Request) {

@@ -39,7 +39,7 @@ export type Transaction = {
 };
 export type State = {
   version: 1;
-  user: { id: string; mode: 'demo' };
+  user: { id: string; mode: 'account' | 'demo' };
   items: Item[];
   purchases: { id: string; source: string; at: string }[];
   analyses: {
@@ -52,6 +52,10 @@ export type State = {
   transactions: Transaction[];
   applied: string[];
 };
+
+export function emptyState(userId = id()): State {
+  return { version: 1, user: { id: userId, mode: 'account' }, items: [], purchases: [], analyses: [], transactions: [], applied: [] };
+}
 export const calendarDate = (value: Date | string) => {
   const parts = new Intl.DateTimeFormat('en', {
     timeZone: 'Asia/Seoul',

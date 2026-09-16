@@ -1,7 +1,7 @@
 import { createAIService, AIServiceError } from '../ai-service';
 import { isRecord } from '../validation';
 import { validateImage } from '../image-input';
-import { readToken, sessionHash } from './handlers';
+import { requireUser, sha256 } from './auth-session';
 import {
   selectProvider,
   providerTimeout,
@@ -24,8 +24,8 @@ export function createAIHandler(
   return async (request: Request) => {
     if (request.headers.get('Origin') !== new URL(request.url).origin)
       return reply({ error: '이 사이트에서 다시 요청해주세요.' }, 403);
-    const token = readToken(request);
-    if (!token) return reply({ error: '냉장고를 먼저 열어주세요.' }, 401);
+    const user = await requireUser(request, db);
+    if (!user) return reply({ error: '로그인이 필요해요.' }, 401);
     if (!request.headers.get('Content-Type')?.startsWith('application/json'))
       return reply({ error: 'JSON 요청이 필요해요.' }, 415);
     const limit = 7 * 1024 * 1024;
@@ -65,11 +65,11 @@ export function createAIHandler(
       return reply({ error: '분석 요청을 읽지 못했어요.' }, 400);
     }
     try {
-      const snapshot = await repository.find(await sessionHash(token));
+      const snapshot = await repository.find(user.id);
       if (!snapshot) return reply({ error: '냉장고를 다시 열어주세요.' }, 401);
       const provider = selectProvider(env);
       const budget = new AIBudget(db, env);
-      const session = await sessionHash(token);
+      const session = await sha256(user.id);
       const invoke = <T>(
         feature: Feature,
         image: boolean,

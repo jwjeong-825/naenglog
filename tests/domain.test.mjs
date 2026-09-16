@@ -34,6 +34,9 @@ for (const name of [
   'storage',
   'server/repository',
   'server/handlers',
+  'server/auth-session',
+  'server/auth',
+  'recipes',
 ]) {
   const code = ts
     .transpileModule(readFileSync(`src/${name}.ts`, 'utf8'), {
@@ -51,7 +54,8 @@ for (const name of [
         : specifier.startsWith('.')
           ? "from '" + specifier + ".mjs'"
           : match,
-    );
+    )
+    .replace("from 'bcryptjs'", "from '" + pathToFileURL(path.resolve('node_modules/bcryptjs/index.js')).href + "'");
   writeFileSync(path.join(out, `${name}.mjs`), code);
 }
 const d = await import(pathToFileURL(path.join(out, 'domain.mjs')));
@@ -62,6 +66,29 @@ const storage = await import(pathToFileURL(path.join(out, 'storage.mjs')));
 const reviewConfirmation = await import(
   pathToFileURL(path.join(out, 'review-confirmation.mjs'))
 );
+const auth = await import(pathToFileURL(path.join(out, 'server/auth.mjs')));
+const recipeRules = await import(pathToFileURL(path.join(out, 'recipes.mjs')));
+test('account validation normalizes Korean sign-up fields and hashes passwords', async () => {
+  assert.equal(auth.normalizeEmail(' User@Example.COM '), 'user@example.com');
+  assert.equal(auth.normalizePhone('010-1234-5678'), '01012345678');
+  assert.equal(auth.validEmail('broken'), false);
+  assert.equal(auth.validPhone('010-1234-5678'), true);
+  assert.equal(auth.validPassword('simplepassword'), false);
+  assert.equal(auth.validPassword('Safe-pass123!'), true);
+  const hash = await auth.hashPassword('Safe-pass123!');
+  assert.notEqual(hash, 'Safe-pass123!');
+  assert.match(hash, /^\$2[aby]\$/);
+  assert.equal(await auth.verifyPassword('Safe-pass123!', hash), true);
+  assert.equal(await auth.verifyPassword('wrong', hash), false);
+});
+test('recipe fallback uses only the current account inventory and handles empty state', () => {
+  const a = d.seed();
+  const b = d.emptyState('user-b');
+  const aRecipes = recipeRules.recommendRecipes(a.items);
+  assert.ok(aRecipes.length > 0);
+  assert.ok(aRecipes.every((recipe) => recipe.available.every((name) => a.items.some((item) => (item.meaning?.normalizedFoodName || item.name) === name))));
+  assert.deepEqual(recipeRules.recommendRecipes(b.items), []);
+});
 test('bulk review confirmation updates real state and still allows individual changes', async () => {
   const result = await ai.analyzeDetailed({ source: '영수증' });
   const rows = result.rows.slice(0, 2);
@@ -322,6 +349,7 @@ function makeRepository() {
     .filter((f) => f.endsWith('.sql'))
     .sort())
     sql.exec(readFileSync('drizzle/' + file, 'utf8'));
+  sql.exec('PRAGMA foreign_keys = OFF');
   const db = {
     prepare: (query) => ({
       bind: (...values) => ({
@@ -334,16 +362,29 @@ function makeRepository() {
   };
   return { repository: new InventoryRepository(db), sql, db };
 }
+async function createSeeded(repository, userId) {
+  await repository.create(userId);
+  return repository.change(userId, { kind: 'import', revision: 0, state: d.seed() });
+}
+async function authenticate(repository, sql, userId) {
+  const raw = Buffer.from(userId.padEnd(32, 'x').slice(0, 32)).toString('base64url');
+  const tokenHash = Buffer.from(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw))).toString('hex');
+  const now = new Date(), expires = new Date(now.getTime() + 86400000);
+  sql.prepare('INSERT OR IGNORE INTO users (id, name, email, phone, password_hash, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)').run(userId, userId, `${userId}@test.local`, `010${String(Math.abs(userId.length * 7919)).padStart(8, '0').slice(0, 8)}`, 'bcrypt-hash', now.toISOString(), now.toISOString());
+  sql.prepare('INSERT INTO sessions (id, user_id, token_hash, expires_at, created_at, last_used_at) VALUES (?, ?, ?, ?, ?, ?)').run(crypto.randomUUID(), userId, tokenHash, expires.toISOString(), now.toISOString(), now.toISOString());
+  if (!(await repository.find(userId))) await repository.create(userId);
+  return `naenglog_auth=${raw}`;
+}
 test('database migration and session ownership isolate visitors', async () => {
   const { repository: r, sql } = makeRepository();
   try {
-    const a = await r.create('visitor-a'),
-      b = await r.create('visitor-b');
+    const a = await createSeeded(r, 'visitor-a'),
+      b = await createSeeded(r, 'visitor-b');
     assert.notEqual(a.state.user.id, b.state.user.id);
     const egg = a.state.items.find((i) => i.name === '계란');
     const result = await r.change('visitor-a', {
       kind: 'command',
-      revision: 0,
+      revision: 1,
       command: { id: d.id(), itemId: egg.id, action: 'consume', quantity: 3 },
     });
     assert.equal(result.state.items.find((i) => i.id === egg.id).quantity, 7);
@@ -355,7 +396,7 @@ test('database migration and session ownership isolate visitors', async () => {
     await assert.rejects(
       r.change('visitor-b', {
         kind: 'command',
-        revision: 0,
+        revision: 1,
         command: { id: d.id(), itemId: egg.id, action: 'consume', quantity: 1 },
       }),
     );
@@ -366,7 +407,7 @@ test('database migration and session ownership isolate visitors', async () => {
 test('optimistic concurrency prevents lost updates and replay double consumption', async () => {
   const { repository: r, sql } = makeRepository();
   try {
-    const a = await r.create('a'),
+    const a = await createSeeded(r, 'a'),
       egg = a.state.items.find((i) => i.name === '계란');
     const command = {
       id: d.id(),
@@ -374,22 +415,22 @@ test('optimistic concurrency prevents lost updates and replay double consumption
       action: 'consume',
       quantity: 3,
     };
-    await r.change('a', { kind: 'command', revision: 0, command });
+    await r.change('a', { kind: 'command', revision: 1, command });
     const replay = await r.change('a', {
       kind: 'command',
-      revision: 0,
+      revision: 1,
       command,
     });
-    assert.equal(replay.revision, 1);
+    assert.equal(replay.revision, 2);
     const attempts = await Promise.allSettled([
       r.change('a', {
         kind: 'command',
-        revision: 1,
+        revision: 2,
         command: { ...command, id: d.id() },
       }),
       r.change('a', {
         kind: 'command',
-        revision: 1,
+        revision: 2,
         command: { ...command, id: d.id() },
       }),
     ]);
@@ -433,20 +474,15 @@ test('legacy import is validated, atomic and cannot overwrite existing server wo
   }
 });
 test('HTTP API protects session cookies and rejects cross-origin or malformed writes', async () => {
-  const { repository: r, sql } = makeRepository();
+  const { repository: r, sql, db } = makeRepository();
   try {
-    const api = createInventoryHandlers(r),
+    const cookie = await authenticate(r, sql, 'http-user');
+    const api = createInventoryHandlers(r, db),
       response = await api.GET(
-        new Request('https://fridge.test/api/inventory'),
+        new Request('https://fridge.test/api/inventory', { headers: { Cookie: cookie } }),
       );
     assert.equal(response.status, 200);
-    assert.match(
-      response.headers.get('set-cookie'),
-      /HttpOnly; SameSite=Strict/,
-    );
-    assert.match(response.headers.get('set-cookie'), /Secure/);
     assert.match(response.headers.get('cache-control'), /no-store/);
-    const cookie = response.headers.get('set-cookie').split(';')[0];
     const post = (origin, body) =>
       api.POST(
         new Request('https://fridge.test/api/inventory', {
@@ -628,13 +664,12 @@ test('server AI requires own session, validates image bytes, and runs without ex
   const { createAIHandler } = await import(
     pathToFileURL(path.join(out, 'server/ai-handlers.mjs'))
   );
-  const { repository: r, sql } = makeRepository();
+  const { repository: r, sql, db } = makeRepository();
   try {
-    const inventory = createInventoryHandlers(r);
-    const first = await inventory.GET(
-      new Request('https://naenglog.test/api/inventory'),
-    );
-    const cookie = first.headers.get('set-cookie').split(';')[0];
+    await createSeeded(r, 'ai-user');
+    const cookie = await authenticate(r, sql, 'ai-user');
+    const inventory = createInventoryHandlers(r, db);
+    await inventory.GET(new Request('https://naenglog.test/api/inventory', { headers: { Cookie: cookie } }));
     const aiHandler = createAIHandler(r, {}, databaseFor(sql));
     const send = (body, extra = {}) =>
       aiHandler(
@@ -1076,7 +1111,7 @@ test('expired reservations remain charged after restart and inventory remains wr
   const status = await b.summary();
   assert.equal(status.estimatedKrw, 8.64);
   assert.equal(status.recent[0].status, 'uncertain');
-  const initial = await r.create('new');
+  const initial = await createSeeded(r, 'new');
   const egg = initial.state.items.find((i) => i.name === '계란');
   sql
     .prepare('UPDATE ai_budget SET snapshot=? WHERE id=?')
@@ -2035,10 +2070,8 @@ test('OpenAI HTTP integration checks budget before fetch, records usage and serv
   const originalFetch = globalThis.fetch;
   let calls = 0;
   try {
-    const first = await createInventoryHandlers(repository).GET(
-      new Request('https://naenglog.test/api/inventory'),
-    );
-    const cookie = first.headers.get('set-cookie').split(';')[0];
+    await createSeeded(repository, 'openai-user');
+    const cookie = await authenticate(repository, sql, 'openai-user');
     globalThis.fetch = async () => {
       calls++;
       return openResponse({

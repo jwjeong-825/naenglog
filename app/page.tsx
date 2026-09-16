@@ -1,5 +1,6 @@
 'use client';
 import { ReceiptInput } from './receipt-input';
+import { AuthScreen, type Account } from './auth-screen';
 import { ReceiptReview } from './receipt-review';
 import type {
   PendingProduct,
@@ -21,6 +22,8 @@ import {
   MessageSquare,
   ScanLine,
   History,
+  UserRound,
+  Utensils,
   ArrowUpRight,
   ArrowLeft,
   Check,
@@ -64,6 +67,7 @@ import {
   type Storage,
 } from '../src/domain';
 import { loadRemote, mutateRemote, ApiError, type Mutation } from '../src/api';
+import { recommendRecipes } from '../src/recipes';
 const HOME_ITEM_PREVIEW_LIMIT = 5;
 const actionNames = {
   purchase: '구매 등록',
@@ -76,6 +80,7 @@ const navs = [
   ['home', '홈', House],
   ['fridge', '냉장고', Refrigerator],
   ['add', '추가', Plus],
+  ['recipes', '레시피', Utensils],
   ['assistant', '빠른 기록', MessageSquare],
   ['history', '기록', History],
 ] as const;
@@ -113,6 +118,7 @@ export default function Home() {
   const revisionRef = useRef(0),
     mutationRef = useRef(false);
   const [saving, setSaving] = useState(false);
+  const [account, setAccount] = useState<Account | null | undefined>(undefined);
   const requestRef = useRef<AbortController | null>(null);
   const [brief, setBrief] = useState<Briefing | null>(null),
     [briefSource, setBriefSource] = useState('모의 분석 중');
@@ -163,10 +169,16 @@ export default function Home() {
   };
   useEffect(() => {
     let active = true;
-    Promise.resolve()
-      .then(() => loadRemote(true))
+    fetch('/api/auth/me', { cache: 'no-store' })
+      .then(async (response) => {
+        if (response.status === 401) { if (active) setAccount(null); return null; }
+        if (!response.ok) throw new Error('로그인 상태를 확인하지 못했어요.');
+        const body = await response.json() as { user: Account };
+        if (active) setAccount(body.user);
+        return loadRemote(true);
+      })
       .then((s) => {
-        if (active) {
+        if (active && s) {
           revisionRef.current = s.revision;
           setState(s.state);
           ai.config()
@@ -176,7 +188,7 @@ export default function Home() {
         }
       })
       .catch((e) => {
-        if (active) setError((e as Error).message);
+        if (active) { setError((e as Error).message); setAccount(null); }
       });
     return () => {
       active = false;
@@ -211,7 +223,7 @@ export default function Home() {
               ? '체험 AI 한도 · 기본 규칙 안내'
               : '분석 지연 · 기본 규칙 안내',
           );
-          if (limited) setError(error.message);
+          if (limited) setNotice('AI 추천 대신 기본 보관 안내를 보여드리고 있어요.');
         }
       });
     return () => controller.abort();
@@ -327,6 +339,7 @@ export default function Home() {
     item = list.find((i) => i.id === selected),
     urgent = list.filter((i) => i.days >= 0 && i.days <= 2),
     expired = list.filter((i) => i.days < 0);
+  const recipes = state ? recommendRecipes(state.items) : [];
   const choose = (itemId: string) => {
     setSelected(itemId);
     setAmount('1');
@@ -432,19 +445,15 @@ export default function Home() {
       <ChevronRight size={17} />
     </button>
   );
+  if (account === undefined) return <main className="auth-page"><section className="auth-card"><div className="auth-brand"><span>냉</span><strong>냉로그</strong></div><Skeleton className="h-40 w-full" /></section></main>;
+  if (!account) return <AuthScreen onAuthenticated={() => window.location.reload()} />;
   return (
     <div className="app-shell">
       <header className="app-header">
         <button className="brand" onClick={() => go('home')}>
           냉로그
         </button>
-        <button
-          className="header-add"
-          onClick={() => go('add')}
-          aria-label="식품 추가"
-        >
-          <Plus size={20} /> 추가
-        </button>
+        <div className="header-actions"><button className="header-add" onClick={() => go('add')} aria-label="식품 추가"><Plus size={20} /> 추가</button><button className="header-add" onClick={() => go('account')} aria-label="내 정보"><UserRound size={20} /> 내 정보</button></div>
       </header>
       <main>
         {error && (
@@ -583,6 +592,10 @@ export default function Home() {
                     <ChevronRight size={16} />
                   </button>
                 </details>
+                <section className="recipe-preview">
+                  <div className="section-heading"><h2>오늘 추천 레시피</h2><button onClick={() => go('recipes')}>레시피 더 보기 <ChevronRight size={15} /></button></div>
+                  {!recipes.length ? <Blank text="냉장고에 식품을 추가하면 레시피를 추천해드릴게요." /> : recipes.slice(0, 2).map((recipe) => <button className="recipe-card" key={recipe.id} onClick={() => { setSelected(recipe.id); go('recipe-detail'); }}><div><strong>{recipe.name}</strong><p>{recipe.available.join(', ')} 활용 · {recipe.minutes}분</p></div><ChevronRight size={18} /></button>)}
+                </section>
               </>
             )}
             {view === 'fridge' && (
@@ -1184,6 +1197,9 @@ export default function Home() {
                 </p>
               </>
             )}
+            {view === 'recipes' && <><div className="heading"><div><h1>레시피</h1><p className="intro">내 냉장고 재료를 우선 활용해요.</p></div></div>{!recipes.length ? <Blank text="냉장고에 식품을 추가하면 레시피를 추천해드릴게요." /> : <div className="recipe-list">{recipes.map((recipe) => <button className="recipe-card" key={recipe.id} onClick={() => { setSelected(recipe.id); go('recipe-detail'); }}><div><strong>{recipe.name}</strong><p>보유 {recipe.available.join(', ')}</p><small>부족 {recipe.missing.length ? recipe.missing.join(', ') : '없음'} · 약 {recipe.minutes}분</small><em>{recipe.reason}</em></div><ChevronRight size={18} /></button>)}</div>}<p className="footnote">AI 한도와 관계없이 냉장고 재료 조합을 바탕으로 기본 추천을 계속 제공해요.</p></>}
+            {view === 'recipe-detail' && (() => { const recipe = recipes.find((r) => r.id === selected); return recipe ? <><button className="back" onClick={() => go('recipes')}><ArrowLeft size={18} /> 레시피</button><section className="panel recipe-detail"><p className="eyebrow">예상 {recipe.minutes}분</p><h1>{recipe.name}</h1><h2>냉장고에서 활용</h2><p>{recipe.available.join(', ')}</p><h2>부족한 재료</h2><p>{recipe.missing.length ? recipe.missing.join(', ') : '추가로 필요한 재료가 없어요.'}</p><h2>필요한 재료</h2><p>{recipe.ingredients.join(', ')}</p><h2>조리 순서</h2><ol>{recipe.steps.map((step, index) => <li key={step}><span>{index + 1}</span>{step}</li>)}</ol></section></> : null; })()}
+            {view === 'account' && <><div className="heading"><div><h1>내 정보</h1></div></div><section className="panel account-panel"><dl><div><dt>이름</dt><dd>{account.name}</dd></div><div><dt>이메일</dt><dd>{account.email}</dd></div><div><dt>전화번호</dt><dd>{account.phone.replace(/(\d{3})(\d{3,4})(\d{4})/, '$1-$2-$3')}</dd></div></dl><button className="secondary wide" onClick={async () => { await fetch('/api/auth/logout', { method: 'POST' }); window.location.reload(); }}>로그아웃</button></section></>}
             {view === 'history' && (
               <>
                 <div className="heading">
@@ -1245,10 +1261,10 @@ export default function Home() {
                   className="secondary wide"
                   onClick={() => setReset(true)}
                 >
-                  데모 처음부터 다시 체험하기
+                  내 냉장고 비우기
                 </button>
                 <p className="footnote">
-                  현재 냉장고의 기록과 재고가 데모 초기 상태로 바뀝니다.
+                  현재 계정의 재고와 기록만 삭제됩니다.
                 </p>
               </>
             )}
@@ -1285,11 +1301,10 @@ export default function Home() {
               <AlertDialogContent>
                 <AlertDialogHeader>
                   <AlertDialogTitle>
-                    데모를 처음부터 시작할까요?
+                    내 냉장고를 비울까요?
                   </AlertDialogTitle>
                   <AlertDialogDescription>
-                    직접 추가한 재고와 모든 기록이 삭제되고 기본 데모 데이터로
-                    교체됩니다.
+                    현재 계정의 재고와 모든 기록이 삭제됩니다. 다른 사용자의 데이터에는 영향을 주지 않습니다.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -1301,7 +1316,7 @@ export default function Home() {
                         if (
                           !(await commit(
                             { kind: 'reset' },
-                            '데모를 새로 준비했어요.',
+                            '내 냉장고를 비웠어요.',
                           ))
                         )
                           return;

@@ -138,7 +138,7 @@ export function assertState(value: unknown): asserts value is State {
     value.version !== 1 ||
     !isRecord(value.user) ||
     !text(value.user.id) ||
-    value.user.mode !== 'demo' ||
+    !['demo', 'account'].includes(String(value.user.mode)) ||
     !Array.isArray(value.items) ||
     !Array.isArray(value.purchases) ||
     !Array.isArray(value.transactions) ||

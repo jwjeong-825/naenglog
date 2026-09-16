@@ -1,4 +1,4 @@
-import { apply, purchase, seed, type State } from '../domain';
+import { apply, emptyState, purchase, type State } from '../domain';
 import {
   assertState,
   assertCommand,
@@ -27,39 +27,39 @@ export class InventoryRepository {
     private db: Database,
     private provider: 'mock' | 'remote' | 'fallback' = 'mock',
   ) {}
-  async find(session: string): Promise<Snapshot | null> {
+  async find(userId: string): Promise<Snapshot | null> {
     const row = await this.db
       .prepare(
-        'SELECT snapshot, revision FROM inventories WHERE session_hash = ?',
+        'SELECT snapshot, revision FROM user_inventories WHERE user_id = ?',
       )
-      .bind(session)
+      .bind(userId)
       .first<{ snapshot: string; revision: number }>();
     if (!row) return null;
     const state: unknown = JSON.parse(row.snapshot);
     assertState(state);
     return { state, revision: row.revision };
   }
-  async create(session: string): Promise<Snapshot> {
-    const state = seed(),
+  async create(userId: string): Promise<Snapshot> {
+    const state = emptyState(userId),
       at = new Date().toISOString();
     await this.db
       .prepare(
-        'INSERT OR IGNORE INTO inventories (session_hash, snapshot, revision, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
+        'INSERT OR IGNORE INTO user_inventories (user_id, snapshot, revision, created_at, updated_at) VALUES (?, ?, 0, ?, ?)',
       )
-      .bind(session, JSON.stringify(state), at, at)
+      .bind(userId, JSON.stringify(state), at, at)
       .run();
-    const result = await this.find(session);
+    const result = await this.find(userId);
     if (!result) throw new Error('Database initialization failed');
     return result;
   }
-  async change(session: string, request: unknown): Promise<Snapshot> {
+  async change(userId: string, request: unknown): Promise<Snapshot> {
     if (
       !isRecord(request) ||
       !Number.isSafeInteger(request.revision) ||
       Number(request.revision) < 0
     )
       throw new InventoryError(400, '변경 요청 형식이 올바르지 않아요.');
-    const current = await this.find(session);
+    const current = await this.find(userId);
     if (!current)
       throw new InventoryError(
         401,
@@ -106,7 +106,7 @@ export class InventoryRepository {
         String(request.source),
         this.provider,
       );
-    } else if (request.kind === 'reset') next = seed();
+    } else if (request.kind === 'reset') next = emptyState(userId);
     else if (request.kind === 'import') {
       if (current.revision !== 0)
         throw new InventoryError(
@@ -119,12 +119,12 @@ export class InventoryRepository {
     assertState(next);
     const result = await this.db
       .prepare(
-        'UPDATE inventories SET snapshot = ?, revision = revision + 1, updated_at = ? WHERE session_hash = ? AND revision = ?',
+        'UPDATE user_inventories SET snapshot = ?, revision = revision + 1, updated_at = ? WHERE user_id = ? AND revision = ?',
       )
       .bind(
         JSON.stringify(next),
         new Date().toISOString(),
-        session,
+        userId,
         current.revision,
       )
       .run();

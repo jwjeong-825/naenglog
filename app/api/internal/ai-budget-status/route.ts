@@ -1,6 +1,6 @@
 import { env } from 'cloudflare:workers';
 import { AIBudget } from '../../../../src/server/ai-budget';
-import { readToken, sessionHash } from '../../../../src/server/handlers';
+import { requireUser, sha256 } from '../../../../src/server/auth-session';
 import type { AIEnvironment } from '../../../../src/server/ai-provider';
 
 const headers = {
@@ -9,8 +9,9 @@ const headers = {
 };
 
 export async function GET(request: Request) {
-  const token = readToken(request);
-  if (!token)
+  const bindings = env as unknown as AIEnvironment & { DB: D1Database };
+  const user = await requireUser(request, bindings.DB);
+  if (!user)
     return Response.json(
       {
         halted: false,
@@ -32,10 +33,9 @@ export async function GET(request: Request) {
       { status: 401, headers },
     );
 
-  const bindings = env as unknown as AIEnvironment & { DB: D1Database };
   const budget = new AIBudget(bindings.DB, bindings);
   return Response.json(
-    await budget.diagnosticStatus(await sessionHash(token)),
+    await budget.diagnosticStatus(await sha256(user.id)),
     { headers },
   );
 }
