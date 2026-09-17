@@ -4,7 +4,7 @@
 
 - 완료: 게스트 진입 버튼, 임시 HttpOnly 세션, 사용자별 빈 냉장고, 게스트 내 정보 화면, 이용 종료 시 데이터 삭제.
 - 완료: 내부 임시 연락처 비노출, 게스트 비밀번호 변경 차단, 생성 요청 IP 제한, 만료 게스트 정리.
-- 검증: 서버 87/87, typecheck, lint 통과. 다음은 build → GitHub main/Sites 소스 push → 기존 public/env 설정을 유지한 재배포다.
+- 검증/배포: 서버 87/87, typecheck, lint, build 통과. 기능 커밋 `9edfba3`을 GitHub main/Sites 소스에 push하고 기존 public/env revision13을 유지한 Sites 버전33 배포에 성공했다.
 
 ## 이번 사이클
 기존 Provider 경계에 OpenAI Responses 어댑터와 테스트/설정 문서 추가. 자동 테스트48개, 실제 API 호출0. 기능 커밋 cf3d0ac를 GitHub main과 Sites 소스에 push하고 Sites 버전4 배포 성공을 확인했다. 키와 운영 환경은 변경하지 않았으며 Mock 기본값과 소유자 전용 접근을 유지한다.
