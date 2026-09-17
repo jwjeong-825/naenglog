@@ -502,16 +502,28 @@ function MemberHome({
             {view === 'profile' && (
               <section className="panel">
                 <h1>내 정보</h1>
-                <dl className="member-info">
-                  <dt>이름</dt>
-                  <dd>{user.name}</dd>
-                  <dt>이메일</dt>
-                  <dd>{user.email}</dd>
-                  <dt>전화번호</dt>
-                  <dd>{user.phone}</dd>
-                </dl>
-                <p>이 계정의 냉장고만 연결되어 있어요.</p>
-                <PasswordChange />
+                {user.accountType === 'guest' ? (
+                  <>
+                    <p className="guest-status">게스트로 이용 중이에요.</p>
+                    <p>
+                      현재 게스트 냉장고는 다른 사용자와 분리되어 있습니다.
+                      이용을 종료하면 저장한 재고와 기록이 삭제돼요.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <dl className="member-info">
+                      <dt>이름</dt>
+                      <dd>{user.name}</dd>
+                      <dt>이메일</dt>
+                      <dd>{user.email}</dd>
+                      <dt>전화번호</dt>
+                      <dd>{user.phone}</dd>
+                    </dl>
+                    <p>이 계정의 냉장고만 연결되어 있어요.</p>
+                    <PasswordChange />
+                  </>
+                )}
                 <button
                   className="secondary"
                   disabled={busy}
@@ -525,7 +537,7 @@ function MemberHome({
                     }
                   }}
                 >
-                  로그아웃
+                  {user.accountType === 'guest' ? '게스트 이용 종료' : '로그아웃'}
                 </button>
               </section>
             )}

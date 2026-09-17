@@ -231,6 +231,36 @@ export function MemberAccess({
           {busy ? '처리 중…' : register ? '회원가입' : '로그인'}
         </button>
       </form>
+      <div className="auth-divider" aria-hidden="true">
+        <span>또는</span>
+      </div>
+      <button
+        className="secondary wide"
+        type="button"
+        disabled={busy}
+        onClick={async () => {
+          if (busy) return;
+          setBusy(true);
+          setError('');
+          try {
+            const result = await accountRequest({ operation: 'guest' });
+            setUser(result.user);
+            notify();
+          } catch (e) {
+            setError(
+              e instanceof Error ? e.message : '게스트로 시작하지 못했어요.',
+            );
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        게스트로 이용하기
+      </button>
+      <p className="footnote auth-guest-note">
+        가입 없이 둘러볼 수 있어요. 이용을 종료하면 게스트 냉장고 기록은
+        삭제됩니다.
+      </p>
     </main>
   );
 }

@@ -2522,11 +2522,13 @@ test('registration validates required fields, creates bcrypt hash only, and neve
     assert.equal(r.status, 201);
     const body = await r.json();
     assert.deepEqual(Object.keys(body.user).sort(), [
+      'accountType',
       'email',
       'id',
       'name',
       'phone',
     ]);
+    assert.equal(body.user.accountType, 'member');
     const row = sql.prepare('SELECT * FROM users').get();
     assert.match(row.password_hash, /^\$2[aby]\$12\$/);
     assert.ok(!JSON.stringify(row).includes(c.password));
@@ -2535,6 +2537,57 @@ test('registration validates required fields, creates bcrypt hash only, and neve
       !JSON.stringify(sql.prepare('SELECT * FROM sessions').get()).includes(
         cookieOf(r).split('=')[1],
       ),
+    );
+  } finally {
+    sql.close();
+  }
+});
+test('guest access creates an isolated temporary refrigerator and removes it on exit', async () => {
+  const { db, sql } = makeRepository();
+  try {
+    const auth = new AuthStore(db),
+      repository = new InventoryRepository(db, 'mock', true),
+      http = authenticatedInventoryHandlers(repository, auth),
+      started = await auth.POST(authRequest({ operation: 'guest' }));
+    assert.equal(started.status, 201);
+    assert.ok(!started.headers.get('set-cookie').includes('Max-Age'));
+    const body = await started.json();
+    assert.equal(body.user.accountType, 'guest');
+    assert.equal(body.user.name, '게스트');
+    assert.equal(body.user.email, '');
+    assert.equal(body.user.phone, '');
+    const session = cookieOf(started);
+    const inventory = await http.GET(memberGet(session));
+    assert.equal(inventory.status, 200);
+    assert.equal((await inventory.json()).state.items.length, 0);
+    assert.equal(
+      (
+        await auth.POST(
+          authRequest(
+            {
+              operation: 'password',
+              currentPassword: 'none',
+              newPassword: 'Not-available-2026',
+            },
+            session,
+          ),
+        )
+      ).status,
+      403,
+    );
+    assert.equal(
+      sql.prepare('SELECT count(*) AS n FROM member_inventories').get().n,
+      1,
+    );
+    const exited = await auth.POST(
+      authRequest({ operation: 'logout' }, session),
+    );
+    assert.equal(exited.status, 200);
+    assert.equal((await auth.GET(memberGet(session))).status, 401);
+    assert.equal(sql.prepare('SELECT count(*) AS n FROM users').get().n, 0);
+    assert.equal(
+      sql.prepare('SELECT count(*) AS n FROM member_inventories').get().n,
+      0,
     );
   } finally {
     sql.close();

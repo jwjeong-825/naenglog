@@ -2,8 +2,15 @@ import { hash, compare } from 'bcryptjs';
 import type { Database } from './repository';
 import { isRecord } from '../validation';
 
-export type Member = { id: string; name: string; email: string; phone: string };
+export type Member = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  accountType: 'member' | 'guest';
+};
 const cookieName = 'naenglog_auth';
+const guestDomain = '@guest.naenglog.local';
 const generic = '이메일/전화번호 또는 비밀번호가 올바르지 않아요.';
 const encoder = new TextEncoder();
 const hex = (bytes: Uint8Array) =>
@@ -48,12 +55,65 @@ export class AuthStore {
   async member(request: Request): Promise<Member | null> {
     const token = memberToken(request);
     if (!token) return null;
-    return this.db
+    const user = await this.db
       .prepare(
         'SELECT u.id,u.name,u.email,u.phone FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.expires_at>?',
       )
       .bind(await tokenHash(token), new Date(this.now()).toISOString())
-      .first<Member>();
+      .first<Omit<Member, 'accountType'>>();
+    if (!user) return null;
+    const guest = user.email.endsWith(guestDomain);
+    return {
+      ...user,
+      email: guest ? '' : user.email,
+      phone: guest ? '' : user.phone,
+      accountType: guest ? 'guest' : 'member',
+    };
+  }
+  private async issueSession(
+    request: Request,
+    user: Member,
+    persistent: boolean,
+    status: number,
+  ) {
+    const ttl = persistent ? 30 * 86400 : 12 * 3600,
+      token = random(),
+      now = new Date(this.now()).toISOString();
+    await this.db
+      .prepare('DELETE FROM sessions WHERE expires_at<?')
+      .bind(now)
+      .run();
+    await this.db
+      .prepare(
+        'INSERT INTO sessions(id,user_id,token_hash,expires_at,persistent,created_at,last_used_at) VALUES (?,?,?,?,?,?,?)',
+      )
+      .bind(
+        crypto.randomUUID(),
+        user.id,
+        await tokenHash(token),
+        new Date(this.now() + ttl * 1000).toISOString(),
+        persistent ? 1 : 0,
+        now,
+        now,
+      )
+      .run();
+    await this.db
+      .prepare(
+        "DELETE FROM member_inventories WHERE user_id IN (SELECT id FROM users WHERE email LIKE ? AND id NOT IN (SELECT user_id FROM sessions))",
+      )
+      .bind(`guest-%${guestDomain}`)
+      .run();
+    await this.db
+      .prepare(
+        'DELETE FROM users WHERE email LIKE ? AND id NOT IN (SELECT user_id FROM sessions)',
+      )
+      .bind(`guest-%${guestDomain}`)
+      .run();
+    return json(
+      { user },
+      status,
+      cookie(request, token, persistent ? ttl : undefined),
+    );
   }
   private async throttle(
     request: Request,
@@ -140,6 +200,8 @@ export class AuthStore {
       if (body.operation === 'password') {
         const user = await this.member(request);
         if (!user) return json({ error: '로그인이 필요해요.' }, 401);
+        if (user.accountType === 'guest')
+          return json({ error: '게스트 계정은 비밀번호가 없어요.' }, 403);
         if (!(await this.throttle(request, user.email, false)))
           return json(
             { error: '요청이 많아요. 15분 후 다시 시도해주세요.' },
@@ -191,12 +253,55 @@ export class AuthStore {
       }
       if (body.operation === 'logout') {
         const token = memberToken(request);
+        const user = token ? await this.member(request) : null;
         if (token)
           await this.db
             .prepare('DELETE FROM sessions WHERE token_hash=?')
             .bind(await tokenHash(token))
             .run();
+        if (user?.accountType === 'guest') {
+          await this.db
+            .prepare('DELETE FROM member_inventories WHERE user_id=?')
+            .bind(user.id)
+            .run();
+          await this.db
+            .prepare('DELETE FROM users WHERE id=?')
+            .bind(user.id)
+            .run();
+        }
         return json({ ok: true }, 200, cookie(request, '', 0));
+      }
+      if (body.operation === 'guest') {
+        if (!(await this.throttle(request, 'guest', true)))
+          return json(
+            { error: '게스트 시작 요청이 많아요. 15분 후 다시 시도해주세요.' },
+            429,
+          );
+        const id = crypto.randomUUID(),
+          now = new Date(this.now()).toISOString(),
+          guestEmail = `guest-${id}${guestDomain}`,
+          user: Member = {
+            id,
+            name: '게스트',
+            email: '',
+            phone: '',
+            accountType: 'guest',
+          };
+        await this.db
+          .prepare(
+            'INSERT INTO users(id,name,email,phone,password_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
+          )
+          .bind(
+            id,
+            user.name,
+            guestEmail,
+            `guest-${id}`,
+            'guest-no-password',
+            now,
+            now,
+          )
+          .run();
+        return this.issueSession(request, user, false, 201);
       }
       if (!['register', 'login'].includes(String(body.operation)))
         return json({ error: '지원하지 않는 요청이에요.' }, 400);
@@ -237,6 +342,7 @@ export class AuthStore {
           name.length > 60 ||
           email.length > 254 ||
           !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+          email.endsWith(guestDomain) ||
           !/^01[016789]\d{7,8}$/.test(mobile) ||
           body.password !== body.confirmPassword ||
           !/[^\s]/.test(body.password) ||
@@ -249,7 +355,13 @@ export class AuthStore {
             400,
           );
         const passwordHash = await hash(body.password, 12);
-        user = { id: crypto.randomUUID(), name, email, phone: mobile };
+        user = {
+          id: crypto.randomUUID(),
+          name,
+          email,
+          phone: mobile,
+          accountType: 'member',
+        };
         const result = await this.db
           .prepare(
             'INSERT OR IGNORE INTO users(id,name,email,phone,password_hash,created_at,updated_at) VALUES (?,?,?,?,?,?,?)',
@@ -291,33 +403,14 @@ export class AuthStore {
           name: found.name,
           email: found.email,
           phone: found.phone,
+          accountType: 'member',
         };
       }
-      const persistent = body.remember === true,
-        ttl = persistent ? 30 * 86400 : 12 * 3600,
-        token = random();
-      await this.db
-        .prepare('DELETE FROM sessions WHERE expires_at<?')
-        .bind(new Date(this.now()).toISOString())
-        .run();
-      await this.db
-        .prepare(
-          'INSERT INTO sessions(id,user_id,token_hash,expires_at,persistent,created_at,last_used_at) VALUES (?,?,?,?,?,?,?)',
-        )
-        .bind(
-          crypto.randomUUID(),
-          user.id,
-          await tokenHash(token),
-          new Date(this.now() + ttl * 1000).toISOString(),
-          persistent ? 1 : 0,
-          new Date(this.now()).toISOString(),
-          new Date(this.now()).toISOString(),
-        )
-        .run();
-      return json(
-        { user },
+      return this.issueSession(
+        request,
+        user,
+        body.remember === true,
         register ? 201 : 200,
-        cookie(request, token, persistent ? ttl : undefined),
       );
     } catch {
       return json(
